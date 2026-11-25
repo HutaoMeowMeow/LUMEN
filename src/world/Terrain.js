@@ -53,12 +53,59 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   vec3 col;
   rough = 0.95;
   if (y > 0.6) {
-    float beach = 1.0 - smoothstep(1.6, 3.2 + 1.5 * n1, y);
+    // fine detail fades to its mip average with distance so far ground never shimmers
+    float fine = 1.0 - smoothstep(12.0, 55.0, length(P - cameraPosition));
+    vec4 fA = texture2D(uNoise, P.xz * 1.3);  // grain / leaf scale (~2-10 cm)
+    vec4 fB = texture2D(uNoise, P.xz * 0.11); // patch scale (~1-9 m)
+    // sand: grain jitter, dark mineral specks and pale shell grit
+    float grain = fA.g - 0.5;
+    sand *= 1.0 + grain * 0.16 * fine;
+    sand = mix(sand, sand * vec3(0.55, 0.52, 0.5), smoothstep(0.8, 0.95, fA.a) * 0.5 * fine);
+    sand = mix(sand, vec3(0.97, 0.94, 0.88), smoothstep(0.82, 0.95, fA.r) * 0.35 * fine);
+    // tide line: wavy wet band, damp darker sand above it, a thin wrack of dried weed at the high-water mark
+    float wl = 1.05 + 0.4 * (fB.r - 0.5) + 0.18 * sin(P.x * 0.09 + P.z * 0.06 + 6.0 * n3);
+    float wet = 1.0 - smoothstep(wl - 0.12, wl + 0.08, y);
+    float damp = 1.0 - smoothstep(wl, wl + 0.9 + 0.4 * n1, y);
+    float hw = wl + 1.05 + 0.25 * n2;
+    float wrack = (1.0 - smoothstep(0.03, 0.14, abs(y - hw))) * smoothstep(0.45, 0.7, fB.b + 0.3 * (n2 - 0.5));
+    vec3 drySand = sand;
+    sand = mix(sand, sand * vec3(0.8, 0.78, 0.76), damp * 0.8);
+    sand = mix(sand, drySand * vec3(0.56, 0.54, 0.53), wet);
+    sand = mix(sand, mix(vec3(0.2, 0.17, 0.11), vec3(0.36, 0.3, 0.18), fA.g), wrack * 0.75);
+    float sandRough = mix(mix(0.93 + 0.07 * fA.g, 0.82, damp), 0.42 + 0.08 * fA.r, wet);
+    // forest floor: leaf litter mosaic, humus, root/twig lines and pebbles; grass ground cover in the open
+    vec3 leafC = mix(vec3(0.3, 0.2, 0.11), vec3(0.52, 0.36, 0.17), fA.g);
+    leafC = mix(leafC, vec3(0.42, 0.4, 0.19), smoothstep(0.62, 0.8, fA.r) * 0.6); // fresh yellow-green fall
+    leafC = mix(leafC, vec3(0.62, 0.42, 0.2), smoothstep(0.75, 0.9, fA.b) * 0.4);
+    leafC = mix(vec3(0.36, 0.26, 0.15), leafC, fine); // far: average colour, no speckle
+    vec3 humus = vec3(0.17, 0.13, 0.09) * (0.85 + 0.3 * n2);
+    vec3 floorC = mix(humus, leafC, smoothstep(0.25, 0.6, fA.a + 0.25 * fB.g) * (0.55 + 0.45 * fine));
+    float twig = smoothstep(0.9, 0.97, texture2D(uNoise, P.xz * vec2(0.23, 0.61) + n1).a) * fine;
+    floorC = mix(floorC, vec3(0.25, 0.19, 0.13), twig * 0.7);
+    float pebble = smoothstep(0.83, 0.9, texture2D(uNoise, P.xz * 1.1 + 0.37).r) * fine;
+    floorC = mix(floorC, vec3(0.42, 0.4, 0.37) * (0.8 + 0.4 * fA.g), pebble * 0.8);
+    float litter = smoothstep(0.42, 0.7, fB.b + 0.35 * (n1 - 0.5)) * smoothstep(3.5, 7.0, y);
+    grass *= mix(vec3(1.0), vec3(1.12, 1.05, 0.8), smoothstep(0.55, 0.85, fB.r)); // sun-bleached swathes
+    grass *= 1.0 + (fA.g - 0.5) * 0.2 * fine;
+    float beach = 1.0 - smoothstep(1.6, 3.2 + 1.5 * n1, y + 0.9 * (fB.g - 0.5));
     col = mix(grass, dirt, smoothstep(0.55, 0.8, n3) * 0.6);
-    col = mix(col, sand, beach);
-    col = mix(col, rock, smoothstep(0.32, 0.5, slope + 0.1 * n2));
+    col = mix(col, floorC, litter * 0.85);
+    rough = mix(0.88, 0.8, litter);
+    col = mix(col, mix(sand, dirt, 0.45) * 0.92, beach * (1.0 - beach) * 2.4); // sandy soil between beach and turf
+    col = mix(col, sand, smoothstep(0.25, 0.75, beach));
+    rough = mix(rough, sandRough, smoothstep(0.25, 0.75, beach));
+    // rock: quartz veins and lichen, darker where it meets the soil so it sits in the ground
+    float rb = smoothstep(0.32, 0.5, slope + 0.1 * n2);
+    vec4 rt = terrainTri(P, Nw, 0.6);
+    rock = mix(rock, vec3(0.7, 0.67, 0.6), smoothstep(0.95, 0.99, terrainTri(P, Nw, 0.07).a) * 0.45);
+    rock = mix(rock, mix(vec3(0.62, 0.6, 0.5), vec3(0.62, 0.45, 0.22), rt.b), smoothstep(0.78, 0.9, rt.r) * smoothstep(0.3, 0.7, Nw.y + 0.3) * 0.35 * fine);
+    col = mix(col, rock, rb);
+    col *= 1.0 - 0.3 * rb * (1.0 - rb) * 4.0;
+    rough = mix(rough, mix(0.97, 0.78, rh) + crack * 0.05, rb);
+    col = mix(col, col * 0.62, damp * rb); // splash-darkened rock at the shore
+    rough = mix(rough, 0.5, wet * rb);
     col = mix(col, ash, bio.a * (1.0 - beach * 0.5));
-    col = mix(col, sand * 0.7, (1.0 - smoothstep(0.6, 1.4, y)));
+    rough = mix(rough, 0.97, bio.a);
   } else {
     float depthT = smoothstep(-12.0, -45.0, y + 10.0 * (n3 - 0.5));
     col = mix(sand, silt, depthT);
@@ -69,8 +116,8 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     col = mix(col, rock * 0.85, smoothstep(0.3, 0.5, slope + 0.12 * n2));
     col = mix(col, ooze, smoothstep(-110.0, -180.0, y) * max(bio.b, 0.6));
     col = mix(col, ash, bio.a * 0.8);
-    col = mix(col, sand * 0.6, smoothstep(-1.5, 0.6, y)); // wet sand at the waterline
-    rough = mix(0.95, 0.55, smoothstep(-1.0, 0.6, y) * (1.0 - smoothstep(0.6, 1.4, y)));
+    col = mix(col, sand * 0.56, smoothstep(-1.5, 0.6, y)); // wet sand at the waterline, matching the band above
+    rough = mix(0.95, 0.45, smoothstep(-1.0, 0.6, y));
   }
   return col;
 }
@@ -85,15 +132,23 @@ diffuseColor.rgb *= terrainAlbedo(vWPos, normalize(vWNormal), tRough);
 `;
 // small-scale ripples and grit via noise gradient (cheap bump)
 const FRAG_NORMAL = /* glsl */ `
+roughnessFactor = tRough;
 {
   float e = 0.35;
-  float s = vWPos.y < 0.5 ? 0.9 : 0.5;
   vec2 q = vWPos.xz;
   float rip = vWPos.y < 0.5 ? 1.0 : 0.0;
+  // dry beach: wind ripples (analytic slope, ~0.7 m wavelength, steep lee side), broken up where the sand is disturbed
+  float bch = 1.0 - smoothstep(1.6, 3.2 + 1.5 * texture2D(uNoise, q * 0.043).r, vWPos.y + 0.9 * (texture2D(uNoise, q * 0.11).g - 0.5));
+  float disturbed = smoothstep(0.55, 0.75, texture2D(uNoise, q * 0.05).a);
+  float dry = (1.0 - rip) * smoothstep(0.75, 0.95, bch) * smoothstep(1.3, 2.1, vWPos.y) * (1.0 - smoothstep(0.2, 0.35, 1.0 - normalize(vWNormal).y));
+  float s = vWPos.y < 0.5 ? 0.9 : mix(0.5, 0.9, disturbed * bch);
+  vec2 wd = vec2(0.8, 0.6);
+  float ph = dot(q, wd) * 9.0 + texture2D(uNoise, q * 0.06).r * 10.0;
+  vec2 dg = wd * (cos(ph) + 0.35 * cos(2.0 * ph)) * 0.11 * dry * (1.0 - 0.85 * disturbed);
   float h0 = texture2D(uNoise, q * 0.37).g + rip * 0.5 * sin(dot(q, vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, q * 0.03).r * 8.0);
   float hx = texture2D(uNoise, (q + vec2(e, 0.0)) * 0.37).g + rip * 0.5 * sin(dot(q + vec2(e, 0.0), vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, (q + vec2(e, 0.0)) * 0.03).r * 8.0);
   float hz = texture2D(uNoise, (q + vec2(0.0, e)) * 0.37).g + rip * 0.5 * sin(dot(q + vec2(0.0, e), vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, (q + vec2(0.0, e)) * 0.03).r * 8.0);
-  vec3 bw = normalize(vec3(-(hx - h0) / e * 0.12 * s, 1.0, -(hz - h0) / e * 0.12 * s));
+  vec3 bw = normalize(vec3(-(hx - h0) / e * 0.12 * s - dg.x, 1.0, -(hz - h0) / e * 0.12 * s - dg.y));
   float fade = 1.0 - smoothstep(25.0, 70.0, length(vWPos - cameraPosition));
   vec3 bv = normalize((viewMatrix * vec4(bw, 0.0)).xyz);
   vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);

@@ -32,7 +32,17 @@ test('declarations precede uses in the fragment shader', () => {
   assert.ok(at('float lumenAO') < at('*= lumenAO'));
   assert.ok(at('float lumenH') < at('dFdx(lumenH)'));
   assert.ok(at('#include <roughnessmap_fragment>') < at('roughnessFactor = clamp'));
-  assert.ok(at('#include <normal_fragment_begin>') < at('* faceDirection'));
+  assert.ok(at('#include <normal_fragment_begin>') < at('float lumenFD') && at('float lumenFD') < at('* lumenFD'));
+});
+
+test('shadow filtering patch lands in three\'s PCF and leaf canopies keep their volume normals', () => {
+  const f = patched({ translucent: 0.5, leafOnly: true, volume: true }).shader.fragmentShader;
+  const at = (s) => { const i = f.indexOf(s); assert.ok(i >= 0, s); return i; };
+  assert.ok(at('float lumenShadowFp') < at('max(shadowRadius, lumenShadowFp)'), 'PCF radius anchor (three upgrade?)');
+  assert.equal(f.split('shadowIntensity * ( 1.0 - lumenShadowSoft )').length - 1, 5, 'shadow return anchors');
+  assert.ok(at('float lumenLeaf') < at('if (lumenLeaf > 0.5)'));
+  assert.ok(at('#include <normal_fragment_begin>') < at('nonPerturbedNormal = normal; lumenFD'));
+  assert.ok(patched({ volume: true }).mat.defines.LEAF_VOLUME);
 });
 
 test('feature defines and cache keys differ per option set', () => {

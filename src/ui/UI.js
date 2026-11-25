@@ -134,7 +134,7 @@ export class UI {
     pr.classList.toggle('show', !!s.prompt);
     if (s.prompt && pr.dataset.t !== s.prompt) { pr.innerHTML = s.prompt; pr.dataset.t = s.prompt; }
     $('bounds').classList.toggle('show', !!s.outOfBounds);
-    $('fps').textContent = s.fps ? `${s.fps} fps` : '';
+    $('fps').textContent = s.fps ? `${s.fps} fps` + (s.res < 1 ? ` · ${Math.round(s.res * 100)}% res` : '') : '';
   }
 
   hint(text, seconds = 6) {

@@ -68,21 +68,26 @@ function leafClump(c, r, n, rnd, c0, c1, opt = {}) {
   const A = new THREE.Color(c0), B = new THREE.Color(c1), t = new THREE.Color();
   const d = new THREE.Vector3(), q = new THREE.Vector3(), X = new THREE.Vector3(), N = new THREE.Vector3(), Z = new THREE.Vector3();
   const w = new THREE.Vector3(), s = new THREE.Vector3();
+  const so = c.x * 1.7 + c.z * 0.9; // per-clump noise offset: each clump gets its own lobes
   for (let i = 0; i < n; i++) {
-    const yv = 1 - 1.75 * ((i + 0.5) / n), rr = Math.sqrt(Math.max(0, 1 - yv * yv)), ph = i * 2.39996 + rnd() * 0.8;
-    d.set(Math.cos(ph) * rr, yv, Math.sin(ph) * rr).normalize();
-    q.copy(d).multiplyScalar(r * (0.72 + rnd() * 0.32));
+    const yv = 1 - 1.75 * ((i + 0.5) / n), rr = Math.sqrt(Math.max(0, 1 - yv * yv)), ph = i * 2.39996 + rnd() * 1.4;
+    d.set(Math.cos(ph) * rr + (rnd() - 0.5) * 0.25, yv + (rnd() - 0.5) * 0.2, Math.sin(ph) * rr + (rnd() - 0.5) * 0.25).normalize();
+    // lobed outline (sub-clusters and gaps instead of a sphere) and leaves at varied depth inside it
+    const lobe = 0.8 + 0.5 * N3.fbm3(d.x * 1.6 + so, d.y * 1.6, d.z * 1.6 - so, 2);
+    const depth = rnd() < 0.22 ? 0.45 + rnd() * 0.3 : 0.78 + rnd() * 0.3;
+    q.copy(d).multiplyScalar(r * lobe * depth);
     q.y *= sq;
     q.add(c);
     X.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5);
-    X.addScaledVector(d, -X.dot(d)).normalize().addScaledVector(d, 0.45).add(s.set(0, -0.3, 0)).normalize();
+    X.addScaledVector(d, -X.dot(d)).normalize().addScaledVector(d, 0.2 + rnd() * 0.5).add(s.set(0, -0.15 - rnd() * 0.35, 0)).normalize();
     N.copy(d).addScaledVector(X, -d.dot(X)).normalize();
     Z.crossVectors(X, N);
-    const L = r * size * (0.75 + rnd() * 0.5), W = L * (0.42 + rnd() * 0.12);
+    const L = r * size * (0.6 + rnd() * 0.8), W = L * (0.3 + rnd() * 0.3);
+    const fold = (0.06 + rnd() * 0.16) * W, droop = (0.04 + rnd() * 0.2) * L, side = (rnd() - 0.5) * 0.3 * W;
     const f = Math.min(1, Math.max(0, 0.45 + 0.4 * d.y + 0.25 * (rnd() - 0.5)));
-    t.copy(A).lerp(B, f).multiplyScalar(0.85 + rnd() * 0.3);
+    t.copy(A).lerp(B, f).multiplyScalar((0.85 + rnd() * 0.3) * (depth < 0.76 ? 0.72 : 1)); // inner leaves sit in their own shade
     const b = pos.length / 3;
-    for (const [lx, ly, lz, k] of [[0, 0, 0, 0.8], [0.45 * L, 0.14 * W, 0.5 * W, 1], [L, -0.12 * L, 0, 1.12], [0.45 * L, 0.14 * W, -0.5 * W, 1]]) {
+    for (const [lx, ly, lz, k] of [[0, 0, 0, 0.8], [0.42 * L, fold, 0.5 * W + side, 1], [L, -droop, side, 1.12], [0.42 * L, fold, -0.5 * W + side, 1]]) {
       w.copy(q).addScaledVector(X, lx).addScaledVector(N, ly).addScaledVector(Z, lz);
       pos.push(w.x, w.y, w.z);
       s.copy(w).sub(c);
@@ -100,11 +105,35 @@ function leafClump(c, r, n, rnd, c0, c1, opt = {}) {
   paint(g, 0xffffff);
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   const k = new THREE.IcosahedronGeometry(r * core, 1);
-  displace(k, r * 0.12, 1.6 / r, c.x + c.z);
+  displace(k, r * 0.2, 1.6 / r, c.x + c.z);
   k.scale(1, sq, 1);
   k.translate(c.x, c.y, c.z);
   const kc = new THREE.Color(coreCol).multiplyScalar(0.55);
   return [g, paint(k, kc.getHex(), coreCol)];
+}
+
+// Wood along a smooth curve. radius(t, angle, point) -> [radius, darken]; darken goes into the vertex colour
+// (bark furrows, root crotches) so the bark reads without a texture.
+function branchTube(pts, radius, radial, segs, c0, c1) {
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const g = new THREE.TubeGeometry(curve, segs, 1, radial, false);
+  const p = g.attributes.position, nr = g.attributes.normal, n = new THREE.Vector3(), c = new THREE.Vector3();
+  const dark = new Float32Array(p.count);
+  for (let i = 0; i <= segs; i++) {
+    curve.getPointAt(i / segs, c);
+    for (let j = 0; j <= radial; j++) {
+      const k = i * (radial + 1) + j;
+      n.fromBufferAttribute(nr, k);
+      const [r, dk] = radius(i / segs, Math.atan2(n.z, n.x), c);
+      p.setXYZ(k, c.x + n.x * r, c.y + n.y * r, c.z + n.z * r);
+      dark[k] = dk;
+    }
+  }
+  g.computeVertexNormals();
+  paint(g, c0, c1);
+  const col = g.attributes.color;
+  for (let k = 0; k < col.count; k++) col.setXYZ(k, col.getX(k) * (1 - dark[k]), col.getY(k) * (1 - dark[k]), col.getZ(k) * (1 - dark[k]));
+  return g;
 }
 
 // ---------- underwater ----------
@@ -272,9 +301,23 @@ export function anemone(seed = 5) {
 export function seagrass(seed = 6, land = false) {
   const rnd = mulberry32(seed);
   const parts = [];
-  for (let i = 0; i < (land ? 9 : 7); i++) {
-    const h = (land ? 0.35 : 0.5) + rnd() * 0.5;
-    const g = new THREE.PlaneGeometry(land ? 0.05 : 0.07, h, 1, 4);
+  if (land) { // tuft: tapered blades fanning out of one crown, mostly short with a few tall, some tips dried
+    for (let i = 0; i < 13; i++) {
+      const h = 0.18 + rnd() * rnd() * 0.8, lean = 0.2 + rnd() * 0.5, a = rnd() * Math.PI * 2;
+      const g = new THREE.PlaneGeometry(0.025 + rnd() * 0.035, h, 1, 3);
+      g.translate(0, h / 2, 0);
+      const p = g.attributes.position;
+      for (let k = 0; k < p.count; k++) { const f = p.getY(k) / h; p.setX(k, p.getX(k) * (1 - 0.85 * f)); p.setZ(k, lean * h * f * f); }
+      g.rotateY(a);
+      g.translate(Math.sin(a) * 0.08 + (rnd() - 0.5) * 0.12, 0, Math.cos(a) * 0.08 + (rnd() - 0.5) * 0.12);
+      g.computeVertexNormals();
+      parts.push(paint(g, 0x34501a, rnd() < 0.2 ? 0xb8a860 : 0x9ab84a, 0, [0, 0.9]));
+    }
+    return merged(parts);
+  }
+  for (let i = 0; i < 7; i++) {
+    const h = 0.5 + rnd() * 0.5;
+    const g = new THREE.PlaneGeometry(0.07, h, 1, 4);
     g.translate(0, h / 2, 0);
     const p = g.attributes.position;
     const bend = (rnd() - 0.5) * 0.5;
@@ -285,7 +328,7 @@ export function seagrass(seed = 6, land = false) {
     parts.push(paint(g, 0xffffff));
   }
   const g = merged(parts);
-  return land ? paint(g, 0x34501a, 0x9ab84a) : paint(g, 0x2c4a1a, 0x8aa83a);
+  return paint(g, 0x2c4a1a, 0x8aa83a);
 }
 
 // Tall ribbon stalk with alternating blades and float bladders. Height 1 (scaled per instance).
@@ -444,14 +487,25 @@ export function palm(seed = 12, H = 6.5, bend = 1, nFronds = 11, lo = false) {
   return merged(parts);
 }
 
+// Bush / shrub crown: one dominant mass plus uneven satellites, low and spread, so it reads as a shrub not a ball
+function shrubBlobs(rnd, n, r0) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.39996 + rnd() * 0.9, d = i ? 0.35 + rnd() * 0.45 : rnd() * 0.15;
+    const r = r0 * (i ? 0.55 + rnd() * 0.45 : 1.15 + rnd() * 0.2);
+    out.push([new THREE.Vector3(Math.cos(a) * d, r * 0.55 + rnd() * 0.25, Math.sin(a) * d), r, 0.6 + rnd() * 0.3]);
+  }
+  return out;
+}
+
 export function bush(seed = 13, lo = false) {
   const rnd = mulberry32(seed);
   const parts = [];
-  for (let i = 0; i < 5; i++) {
-    const r = 0.45 + rnd() * 0.25, c = new THREE.Vector3((rnd() - 0.5) * 0.8, 0.35 + rnd() * 0.3, (rnd() - 0.5) * 0.8);
-    if (!lo) { parts.push(...leafClump(c, r, 46, rnd, 0x24401a, 0x5a8430, { size: 0.36 })); continue; }
+  for (const [c, r, sq] of shrubBlobs(rnd, 6, 0.55)) {
+    if (!lo) { parts.push(...leafClump(c, r, Math.round(110 * r * r), rnd, 0x24401a, 0x5a8430, { size: 0.36, sq })); continue; }
     const g = new THREE.IcosahedronGeometry(r, 0);
-    displace(g, 0.12, 3, seed + i);
+    displace(g, 0.12, 3, seed + c.x);
+    g.scale(1, sq, 1);
     g.translate(c.x, c.y, c.z);
     parts.push(paint(g, 0x24401a, 0x4a7428));
   }
@@ -787,45 +841,79 @@ export function kelp(seed = 31) {
 // ---------- island additions ----------
 // Broadleaf tree: buttressed trunk, a few limbs, a clumped canopy and hanging vines. ~7 m tall.
 export function broadleafTree(seed = 41, lod = false) {
-  const rnd = mulberry32(seed);
+  const rnd = mulberry32(seed), lrnd = mulberry32(seed * 7 + 1); // leaves draw from their own stream so LOD and full crowns match
   const parts = [];
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const BARK0 = 0x3a3026, BARK1 = 0x6e6250;
   const H = 5 + rnd() * 1.5;
-  const trunk = new THREE.CylinderGeometry(0.22, 0.4, H, lod ? 5 : 8, lod ? 1 : 5, true);
-  trunk.translate(0, H / 2, 0);
-  const p = trunk.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i), a = Math.atan2(p.getZ(i), p.getX(i));
-    const flare = 1 + 1.4 * Math.max(0, 0.9 - y) ** 2 * (0.6 + 0.4 * Math.abs(Math.sin(a * 2.5)));
-    p.setXYZ(i, p.getX(i) * flare + Math.sin(y * 0.6) * 0.15, y, p.getZ(i) * flare);
+  // trunk: gentle S-curved lean, taper, four buttress lobes at the foot, furrowed bark and a few knots
+  const lean = rnd() * Math.PI * 2, bend = 0.25 + rnd() * 0.3, ph = rnd() * 6, lobePh = rnd() * 6;
+  const tpts = [];
+  for (let i = 0; i <= 5; i++) {
+    const t = i / 5, off = bend * t * t + 0.12 * Math.sin(t * 3.5 + ph) * t;
+    tpts.push(V(Math.cos(lean) * off, -0.5 + (H + 0.5) * t, Math.sin(lean) * off));
   }
-  trunk.computeVertexNormals();
-  parts.push(paint(trunk, 0x3a2e22, 0x6a5a44));
-  const top = new THREE.Vector3(0.15 * Math.sin(H * 0.6), H, 0);
-  const tips = [top.clone().add(new THREE.Vector3(0, 1.6, 0))];
-  const mids = [];
-  const nl = 4;
+  const tc = new THREE.CatmullRomCurve3(tpts);
+  const knots = [0, 1, 2].map(() => [0.25 + rnd() * 0.55, rnd() * Math.PI * 2]);
+  const trunkR = (t) => 0.4 - 0.2 * t;
+  parts.push(branchTube(tpts, (t, a, c) => {
+    const foot = Math.max(0, 1 - (c.y + 0.5) / 1.7) ** 2;
+    const lobes = (0.3 + 0.7 * Math.abs(Math.sin(a * 2 + lobePh)) ** 3) * (0.75 + 0.25 * Math.sin(a + ph));
+    const fur = lod ? 0 : 0.5 + 0.5 * Math.sin(a * 5 + c.y * 0.45 + 2 * N3.fbm3(Math.cos(a), c.y * 0.8, Math.sin(a), 2));
+    let knot = 0;
+    if (!lod) for (const [kt, ka] of knots) { const da = Math.atan2(Math.sin(a - ka), Math.cos(a - ka)); knot += Math.exp(-((t - kt) ** 2) / 0.0015 - (da * da) / 0.12); }
+    const lump = 1 + 0.07 * N3.fbm3(Math.cos(a) * 0.8 + seed, c.y * 0.6, Math.sin(a) * 0.8, 2);
+    return [trunkR(t) * (1 + 1.7 * foot * lobes) * lump * (1 - 0.05 * fur) + 0.06 * knot, 0.28 * fur * (1 - foot) + 0.3 * foot * (1 - lobes) + 0.2 * knot];
+  }, lod ? 6 : 16, lod ? 4 : 12, BARK0, BARK1));
+  const wood = (pts, r0, r1, radial, segs) => parts.push(branchTube(pts, (t, a, c) => [
+    (r0 + (r1 - r0) * t) * (1 + 0.12 * N3.fbm3(c.x * 2 + Math.cos(a) * 0.3, c.y * 2, c.z * 2 + Math.sin(a) * 0.3, 2)), 0.12 * (1 - t),
+  ], radial, segs, BARK0, BARK1));
+  // surface roots running out from the buttress lobes and diving into the soil
+  if (!lod) for (let i = 0; i < 4; i++) {
+    const a = (Math.PI / 2 - lobePh + i * Math.PI) / 2, o = V(Math.cos(a), 0, Math.sin(a)), L = 1.1 + rnd() * 0.8;
+    wood([V(0, 0.4, 0).addScaledVector(o, 0.2), V(0, 0.1, 0).addScaledVector(o, 0.3 + L * 0.45), V(0, -0.3, 0).addScaledVector(o, 0.3 + L)], 0.14, 0.04, 6, 5);
+  }
+  // limbs spiral up the upper trunk, arch outward then curl toward the light; most fork once or twice
+  const top = tc.getPointAt(1);
+  const clumps = [[top.clone().add(V(0, 0.9, 0)), 1.45 + rnd() * 0.4]];
+  const tips = [];
+  const nl = 5 + Math.floor(rnd() * 2);
   for (let i = 0; i < nl; i++) {
-    const a = (i / nl) * Math.PI * 2 + rnd() * 0.8;
-    const dir = new THREE.Vector3(Math.cos(a), 0.75 + rnd() * 0.4, Math.sin(a)).normalize();
-    const len = 2 + rnd() * 1.2;
-    const base = top.clone().add(new THREE.Vector3(0, -0.8 - rnd() * 1.2, 0));
-    const l = new THREE.CylinderGeometry(0.08, 0.16, len, 5, 1, true);
-    l.translate(0, len / 2, 0);
-    parts.push(paint(orientTo(l, dir, base), 0x3a2e22, 0x5a4a38));
-    tips.push(base.clone().addScaledVector(dir, len));
-    mids.push(base.clone().addScaledVector(dir, len * 0.45).add(new THREE.Vector3(0, -0.3, 0)));
+    const tb = Math.min(0.97, 0.58 + 0.38 * (i / (nl - 1)) + (rnd() - 0.5) * 0.06);
+    const base = tc.getPointAt(tb);
+    const a = i * 2.39996 + lean + rnd() * 0.5, out = V(Math.cos(a), 0, Math.sin(a));
+    const len = (2.0 + rnd() * 1.1) * (1.15 - (tb - 0.58)), rise = 0.45 + rnd() * 0.35;
+    const p1 = base.clone().addScaledVector(out, len * 0.35).add(V(0, len * rise * 0.3, 0));
+    const p2 = base.clone().addScaledVector(out, len * 0.7).add(V(0, len * rise * 0.5, 0));
+    const p3 = base.clone().addScaledVector(out, len * 0.95).add(V(0, len * rise * 0.85, 0));
+    const pts = [base.clone().addScaledVector(out, -0.05), p1, p2, p3];
+    const r0 = trunkR(tb) * (0.55 + rnd() * 0.15);
+    wood(pts, r0, r0 * 0.3, lod ? 4 : 7, lod ? 3 : 7);
+    clumps.push([p3, 1.1 + rnd() * 0.5]);
+    tips.push(p3);
+    if (rnd() < 0.7) clumps.push([p1.clone().lerp(p2, 0.6).add(V(0, 0.35, 0)), 0.75 + rnd() * 0.35]);
+    const lc = new THREE.CatmullRomCurve3(pts);
+    for (let f = 0, nf = rnd() < 0.6 ? 2 : 1; f < nf; f++) {
+      const fb = lc.getPointAt(0.5 + rnd() * 0.25), fa = a + (f ? -1 : 1) * (0.6 + rnd() * 0.5);
+      const fo = V(Math.cos(fa), 0, Math.sin(fa)), fl = len * (0.4 + rnd() * 0.2);
+      const q2 = fb.clone().addScaledVector(fo, fl).add(V(0, fl * 0.7, 0));
+      wood([fb, fb.clone().addScaledVector(fo, fl * 0.5).add(V(0, fl * 0.35, 0)), q2], r0 * 0.45, r0 * 0.15, lod ? 3 : 5, lod ? 2 : 4);
+      clumps.push([q2, 0.9 + rnd() * 0.4]);
+      tips.push(q2);
+    }
   }
-  // crown: big clumps on the limb tips, smaller ones lower in the crown so the silhouette is rounded, not an umbrella
-  for (const [list, r0, sq] of [[tips, 1.6, 0.8], [mids, 1.1, 0.9]]) for (const t of list) {
-    const r = r0 + rnd() * 0.9;
-    if (!lod) { parts.push(...leafClump(new THREE.Vector3(t.x, t.y + 0.4, t.z), r, Math.round(r * 42), rnd, 0x2a521a, 0x8ab84c, { size: 0.36, sq, core: 0.72 })); continue; }
-    const c = new THREE.IcosahedronGeometry(r, 0);
-    c.scale(1, sq, 1);
-    c.translate(t.x, t.y + 0.4, t.z);
-    parts.push(paint(c, 0x34601f, 0x86b84a));
+  // crown: many smaller clumps of varied squash on every branch end, so the silhouette breaks into masses and gaps
+  for (const [p, r] of clumps) {
+    const sq = 0.65 + rnd() * 0.3, cc = V(p.x, p.y + 0.25, p.z);
+    if (!lod) { parts.push(...leafClump(cc, r, Math.round(48 * r * r), lrnd, 0x2a521a, 0x8ab84c, { size: 0.42 / r, sq, core: 0.66 })); continue; }
+    const g = new THREE.IcosahedronGeometry(r * 0.92, 0);
+    displace(g, r * 0.15, 1.2 / r, p.x + p.z);
+    g.scale(1, sq, 1);
+    g.translate(cc.x, cc.y, cc.z);
+    parts.push(paint(g, 0x34601f, 0x86b84a));
   }
   if (!lod) for (let i = 0; i < 7; i++) {
-    const t = tips[1 + (i % nl)];
+    const t = tips[i % tips.length];
     const len = 1.5 + rnd() * 2.5;
     const g = new THREE.PlaneGeometry(0.07, len, 1, 4);
     g.translate((rnd() - 0.5) * 1.6, t.y - len / 2 - 0.3, 0);
@@ -908,25 +996,23 @@ export function driftwood(seed = 44) {
 
 // Hibiscus-like shrub: leafy mound dotted with flowers
 export function floweringShrub(seed = 45, lo = false) {
-  const rnd = mulberry32(seed);
+  const rnd = mulberry32(seed), lrnd = mulberry32(seed * 7 + 1);
   const parts = [];
-  const blobs = [];
-  for (let i = 0; i < 5; i++) {
-    const r = 0.4 + rnd() * 0.25;
-    const c = new THREE.Vector3((rnd() - 0.5) * 0.9, 0.35 + rnd() * 0.35, (rnd() - 0.5) * 0.9);
-    blobs.push([c, r]);
-    if (!lo) { parts.push(...leafClump(c, r, 42, rnd, 0x1c3a14, 0x4a7a2a, { size: 0.34 })); continue; }
+  const blobs = shrubBlobs(rnd, 6, 0.5);
+  for (const [c, r, sq] of blobs) {
+    if (!lo) { parts.push(...leafClump(c, r, Math.round(105 * r * r), lrnd, 0x1c3a14, 0x4a7a2a, { size: 0.34, sq })); continue; }
     const g = new THREE.IcosahedronGeometry(r, 0);
-    displace(g, 0.14, 3, seed + i);
+    displace(g, 0.14, 3, seed + c.z);
+    g.scale(1, sq, 1);
     g.translate(c.x, c.y, c.z);
     parts.push(paint(g, 0x1c3a14, 0x3e6a24));
   }
   for (let i = 0; i < 18; i++) {
-    const [c, r] = blobs[i % blobs.length];
+    const [c, r, sq] = blobs[i % blobs.length];
     const d = new THREE.Vector3(rnd() - 0.5, rnd() * 0.8 + 0.1, rnd() - 0.5).normalize();
     const f = new THREE.IcosahedronGeometry(0.07, 0);
     f.scale(1, 0.55, 1);
-    f.translate(c.x + d.x * r, c.y + d.y * r, c.z + d.z * r);
+    f.translate(c.x + d.x * r, c.y + d.y * r * sq, c.z + d.z * r);
     parts.push(paint(f, i % 3 ? 0xe0405a : 0xf09a3a));
   }
   return merged(parts);

@@ -118,21 +118,29 @@ void main() {
     R.y = abs(R.y);
     vec3 refl = skyBase(R);
     vec4 cl = skyClouds(R, uTime);
+    vec4 mr = skyMoon(R);
+    refl = mix(refl, max(refl, mr.rgb), mr.a * skyNight());
     refl = mix(refl, cl.rgb, cl.a * 0.8);
     // depth ramp: pale lagoon over sand -> turquoise -> open-ocean blue
     float shallow = exp(-depth * 0.09);
     vec3 body = mix(uWaterDeep * 0.9, uWaterShallow * 1.15, shallow * 0.85 + 0.12);
     body = mix(body, vec3(0.16, 0.5, 0.46) * (0.6 + 0.5 * uDay), exp(-depth * 0.35) * 0.55);
     body *= 0.25 + 0.75 * uDay;
+    float night = 1.0 - uDay;
+    body += vec3(0.003, 0.01, 0.024) * night * (0.4 + 0.6 * skyMoonUp()); // night water stays a deep blue, not black
     // subsurface glow on wave crests facing the light
     float sss = pow(max(dot(V, -uLightDir + N * 0.4), 0.0), 3.0) * max(vCrest, 0.0) * 0.6;
     body += uWaterShallow * sss * uDay;
     col = mix(body, refl, fres);
     vec3 H = normalize(uLightDir + V);
-    float spec = pow(max(dot(N, H), 0.0), 600.0) * 6.0 + pow(max(dot(N, H), 0.0), 60.0) * 0.18;
-    // glitter: sparse sharp glints from the fine ripples, strongest along the sun's path
+    // by moonlight the broad lobe is dropped so the path breaks into scattered glints instead of a solid strip
+    float sunUp = smoothstep(-0.05, 0.1, uSunDir.y);
+    float NH = max(dot(N, H), 0.0);
+    float spec = pow(NH, 600.0) * 6.0 * mix(0.45, 1.0, sunUp) + pow(NH, 60.0) * 0.18 * sunUp;
+    // glitter: sparse sharp glints from the fine ripples, strongest along the light's path (reaching further out at night)
     vec3 Ng = normalize(vNrm + vec3(n2.x + n3.x * 1.6, 0.0, n2.z + n3.z * 1.6) * 0.5);
-    spec += pow(max(dot(Ng, H), 0.0), 2500.0) * 5.0 * fineFade * smoothstep(0.1, 0.3, n3.x + n1.z * 0.5);
+    float gFade = mix(1.0 - smoothstep(40.0, 600.0, dist), fineFade, sunUp);
+    spec += pow(max(dot(Ng, H), 0.0), mix(1200.0, 2500.0, sunUp)) * mix(9.0, 5.0, sunUp) * gFade * smoothstep(0.1, 0.3, n3.x + n1.z * 0.5);
     col += uLightColor * spec * step(0.0, uLightDir.y);
     // foam: shoreline + crests
     float foamN = texture2D(uNormalTex, vWPos.xz * 0.19 + uTime * 0.01).a;
@@ -144,6 +152,9 @@ void main() {
     float crest = smoothstep(0.55, 0.95, vCrest) * smoothstep(0.5, 0.8, foamN);
     float foam = clamp(shore + crest * detailFade, 0.0, 1.0);
     col = mix(col, vec3(0.92, 0.96, 1.0) * (0.3 + 0.7 * uDay), foam * 0.85);
+    // bioluminescent plankton: faint blue-green sparks where the surf is breaking, night only
+    float spark = smoothstep(0.72, 0.95, foamF) * smoothstep(0.3, 0.9, sin(uTime * 1.7 + foamN * 14.0) * 0.5 + 0.5);
+    col += vec3(0.05, 0.5, 0.75) * max(swash, bands) * spark * night * smoothstep(0.6, 0.95, night) * 0.4 * detailFade;
     alpha = clamp(mix(0.55, 0.985, 1.0 - exp(-depth * 0.22)) + fres * 0.5 + foam, 0.0, 1.0);
     // atmospheric fog
     float fa = 1.0 - exp(-pow(dist * uAirFogDensity, 1.35));
@@ -266,6 +277,8 @@ export class Ocean {
     this.uniforms = {
       ...U,
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uMoonDir: { value: new THREE.Vector3(0, -1, 0) },
+      uLightning: { value: new THREE.Vector4() },
       uCloudCover: { value: 0.5 },
       uLightDir: { value: new THREE.Vector3(0, 1, 0) },
       uLightColor: { value: new THREE.Color(1, 1, 1) },
@@ -293,6 +306,8 @@ export class Ocean {
     u.uLightDir.value.copy(sky.lightDir);
     u.uLightColor.value.copy(sky.sunColor).multiplyScalar(Math.min(sky.sunIntensity, 1.6));
     u.uCloudCover.value = sky.uniforms.uCloudCover.value;
+    u.uMoonDir.value.copy(sky.uniforms.uMoonDir.value);
+    u.uLightning.value.copy(sky.uniforms.uLightning.value);
     u.uWaveScale.value = this.waveScale;
     this.mesh.position.set(camera.position.x, 0, camera.position.z);
   }

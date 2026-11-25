@@ -102,7 +102,7 @@ export class Game {
       this.structures.emitters.push(this.creatures.spout);
       this.caustics = new Caustics(renderer);
       this.shafts = new LightShafts(scene, P.shafts);
-      this.particles = new Particles(scene, this.quality, (x, z) => this.ocean.heightAt(x, z, this.time));
+      this.particles = new Particles(scene, this.quality, (x, z) => this.ocean.heightAt(x, z, this.time), (x, z) => world.heightAt(x, z));
       this.postfx = new PostFX(renderer, scene, camera, this.quality);
       this.input = new Input(renderer.domElement);
       this.player = new Player(world, this.ocean, camera, this.input);
@@ -294,7 +294,7 @@ export class Game {
     if (now - R.t0 < 1000) return;
     const ms = (now - R.t0) / R.n;
     R.t0 = now; R.n = 0;
-    if (ms > 21) { R.up = 0; if (++R.down >= 2 && R.scale > 0.6) this._setRes(R.scale - 0.1, now); }
+    if (ms > 21) { R.up = 0; if (++R.down >= 2 && R.scale > this._resMin()) this._setRes(R.scale - 0.1, now); }
     else if (ms < 17.8) { R.down = 0; if (++R.up >= R.wait && R.scale < 1) { R.raisedAt = now; this._setRes(R.scale + 0.1, now); } }
     else R.up = R.down = 0;
   }
@@ -302,10 +302,13 @@ export class Game {
   _setRes(scale, now) {
     const R = this.res;
     if (scale < R.scale && now - R.raisedAt < 6000) R.wait = Math.min(R.wait * 2, 64); // the last step up was too much: wait longer next time
-    R.scale = Math.round(Math.min(1, Math.max(0.6, scale)) * 10) / 10;
+    R.scale = Math.round(Math.min(1, Math.max(this._resMin(), scale)) * 10) / 10;
     R.up = R.down = 0;
     this._resize();
   }
+
+  // High/Ultra keep most of their sharpness: thin foliage aliases badly once the frame is upscaled from 60%
+  _resMin() { return this.settings.preset.resMin ?? 0.6; }
 
   _menuCamera(time) {
     const I = ISLANDS.find((i) => i.id === 'haven') || ISLANDS[0];
@@ -356,8 +359,9 @@ export class Game {
     this.sun.target.position.copy(_v);
     this.sun.position.copy(_v).addScaledVector(L, 200);
     this.sun.color.copy(sky.sunColor);
-    this.sun.intensity = sky.sunIntensity;
+    this.sun.intensity = sky.sunIntensity * (under ? 1 : sky.moonLift); // night boosts stay above water: underwater brightness unchanged
     this.hemi.color.copy(sky.skyAmbient);
+    if (!under) this.hemi.color.add(sky.nightFill);
     this.hemi.groundColor.copy(sky.groundAmbient);
     this.hemi.intensity = 0.75;
 
@@ -464,6 +468,7 @@ export class Game {
       yaw: p.yaw, under, depth, cave, walking: p.mode === 'walk', altitude: p.pos.y - 1.6,
       o2: p.o2, maxO2: p.maxO2, flashlight: p.flashlight, prompt, outOfBounds: p.outOfBounds,
       fps: this.settings.showFps ? Math.round(this.fps) : 0,
+      res: this.res.scale,
     });
 
     if (!this.endingShown && this.discoveries.count >= this.discoveries.total) {

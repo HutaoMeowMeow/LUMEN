@@ -1,10 +1,10 @@
 // Settings and save game, persisted in localStorage (both survive a failing/blocked storage gracefully).
 
 export const PRESETS = {
-  low: { pixelRatio: 0.75, shadows: 0, bloom: false, viewUnder: 110, shafts: 0, label: 'Low' },
-  medium: { pixelRatio: 1, shadows: 1024, bloom: true, viewUnder: 150, shafts: 24, label: 'Medium' },
-  high: { pixelRatio: 1.25, shadows: 2048, bloom: true, viewUnder: 190, shafts: 40, label: 'High' },
-  ultra: { pixelRatio: 2, shadows: 4096, bloom: true, viewUnder: 240, shafts: 60, label: 'Ultra' },
+  low: { pixelRatio: 0.75, resMin: 0.6, shadows: 0, bloom: false, viewUnder: 110, shafts: 0, label: 'Low' },
+  medium: { pixelRatio: 1, resMin: 0.6, shadows: 1024, bloom: true, viewUnder: 150, shafts: 24, label: 'Medium' },
+  high: { pixelRatio: 1.25, resMin: 0.7, shadows: 2048, bloom: true, viewUnder: 190, shafts: 40, label: 'High' },
+  ultra: { pixelRatio: 2, resMin: 0.8, shadows: 4096, bloom: true, viewUnder: 240, shafts: 60, label: 'Ultra' },
 };
 
 function guessQuality() {

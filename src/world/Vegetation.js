@@ -31,6 +31,7 @@ const CRAB_GLSL = /* glsl */ `
 
 // Surface shading per type (local units; corals/props are ~1 unit tall before instance scale).
 // d: shader relief [kind, scale, bump metres, cavity]; ao: contact darkening [min, height]; tl: sun translucency; leaf: translucency only where green
+// vol: leaf-clump canopy whose card normals point out of the clump, kept on back faces too
 const SURF = {
   branch: { d: ['coral', 0.9, 0.012, 0.3], ao: [0.45, 0.5] },
   staghorn: { d: ['coral', 0.7, 0.012, 0.3], ao: [0.45, 0.7] },
@@ -52,11 +53,11 @@ const SURF = {
   barnacles: { d: ['rock', 3, 0.004, 0.3] },
   palm: { d: ['plant', 0.45, 0.02, 0.3], ao: [0.6, 1.2], tl: 0.6, leaf: true },
   palmShort: { d: ['plant', 0.45, 0.02, 0.3], ao: [0.6, 1.0], tl: 0.6, leaf: true },
-  broadleaf: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true },
-  broadleaf2: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true },
+  broadleaf: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true, vol: true },
+  broadleaf2: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true, vol: true },
   bigleaf: { d: ['plant', 1.2, 0.003, 0.2], ao: [0.5, 0.5], tl: 0.7, leaf: true },
-  shrub: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true },
-  bush: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true },
+  shrub: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true, vol: true },
+  bush: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true, vol: true },
   fern: { d: ['plant', 1.5, 0.002, 0.2], ao: [0.5, 0.15], tl: 0.7, leaf: true },
   grass: { ao: [0.5, 0.4], tl: 0.5, leaf: true },
   beachgrass: { ao: [0.55, 0.4], tl: 0.4, leaf: true },
@@ -102,10 +103,10 @@ const TYPES = [
   { name: 'broadleaf', geo: () => GEO.broadleafTree(41), lod: () => GEO.broadleafTree(41, true), pal: [0xffffff, 0xd8e8c0, 0xc8d8b0, 0xe0e0b8], wind: [0.04, 0.7, 7.0], side: 2, view: 900, trunk: [5, 0.42], land: true },
   { name: 'broadleaf2', geo: () => GEO.broadleafTree(48), lod: () => GEO.broadleafTree(48, true), pal: [0xffffff, 0xd0e0b0, 0xe8e8c0], wind: [0.04, 0.75, 7.0], side: 2, view: 900, trunk: [5, 0.42], land: true },
   { name: 'bigleaf', geo: () => GEO.bigLeafPlant(42), pal: [0xffffff, 0xd8f0b8, 0xc0d8a0], wind: [0.08, 1.4, 1.2], side: 2, view: 260, land: true },
-  { name: 'shrub', geo: (lo) => GEO.floweringShrub(45, lo), lo: true, pal: [0xffffff, 0xe0f0d0], wind: [0.04, 1.2, 1.2], side: 2, view: 320, land: true },
+  { name: 'shrub', geo: (lo) => GEO.floweringShrub(45, lo), lo: true, pal: [0xffffff, 0xe0f0d0], wind: [0.04, 1.2, 1.2], side: 2, view: 320, tilt: 0.5, land: true },
   { name: 'beachgrass', geo: () => GEO.beachGrass(43), pal: [0xffffff, 0xe8d8a0, 0xd0d8a0], wind: [0.1, 2.0, 0.9], side: 2, view: 160, land: true },
   { name: 'driftwood', geo: () => GEO.driftwood(44), pal: [0xffffff, 0xd8d0c0], view: 200, tilt: 1, land: true },
-  { name: 'bush', geo: (lo) => GEO.bush(13, lo), lo: true, pal: [0xffffff, 0xd0e8b0, 0xe8e0a0], wind: [0.06, 1.3, 1.2], side: 2, view: 420, land: true },
+  { name: 'bush', geo: (lo) => GEO.bush(13, lo), lo: true, pal: [0xffffff, 0xd0e8b0, 0xe8e0a0], wind: [0.06, 1.3, 1.2], side: 2, view: 420, tilt: 0.5, land: true },
   { name: 'fern', geo: () => GEO.fern(14), pal: [0xffffff, 0xd8f0b0], wind: [0.08, 1.6, 0.6], side: 2, view: 260, land: true },
   { name: 'grass', geo: () => GEO.seagrass(15, true), pal: [0xffffff, 0xe8e0a0, 0xc8e0a0], wind: [0.07, 2.2, 0.8], side: 2, view: 150, land: true },
   { name: 'flowers', geo: () => GEO.flowers(16), pal: [0xff6a8a, 0xffe04a, 0xb08aff, 0xffffff, 0xff9a3a], wind: [0.05, 2.0, 0.5], side: 2, view: 160, land: true },
@@ -141,7 +142,7 @@ export class Vegetation {
         swayAmp: sw?.[0], swayFreq: sw?.[1], swayHeight: sw?.[2],
         detail: sf.d && !lowDetail ? { kind: sf.d[0], scale: sf.d[1], bump: sf.d[2], cavity: sf.d[3] } : undefined,
         ao: sf.ao && { min: sf.ao[0], height: sf.ao[1] },
-        translucent: sf.tl, leafOnly: sf.leaf,
+        translucent: sf.tl, leafOnly: sf.leaf, volume: sf.vol,
         uniforms: { uGlowStrength: { value: t.glow ?? 0 } },
         vertDecl: 'attribute float aGlow; varying float vGlow;',
         vertMain: 'vGlow = aGlow;' + (t.vmain || ''),
@@ -478,13 +479,16 @@ export class Vegetation {
     const j = NV.fbm2(x * 0.011 + 5, z * 0.011 - 9, 3) + 0.2 * smoothstep(4, 12, h) - 0.35 * smoothstep(38, 56, h) - slope * 0.6;
     const tree = () => (rnd() < 0.5 ? T.broadleaf : T.broadleaf2);
     if (j > 0.1) {
-      const dj = 0.5 + 0.5 * d; // canopy density is what makes it read as jungle; thin the understory instead
+      // canopy density is what makes it read as jungle; thin the understory instead. Both are modulated (mean ~1)
+      // so trees gather in groves around light gaps and the undergrowth comes in thickets rather than an even carpet
+      const dj = (0.5 + 0.5 * d) * (0.55 + 0.9 * smoothstep(-0.35, 0.35, NV.fbm2(x * 0.03 + 17, z * 0.03 - 5, 2)));
+      const u = d * (0.45 + 1.1 * smoothstep(-0.3, 0.4, NV.fbm2(x * 0.07 - 21, z * 0.07 + 4, 2)));
       if (r < 0.1 * dj) add(tree(), x, z, 0.75 + rnd() * 0.75);
       else if (r < 0.115 * dj) add(T.palm, x, z, 0.95 + rnd() * 0.45);
-      else if (r < 0.115 * dj + 0.08 * d) add(T.bigleaf, x, z, 0.8 + rnd() * 0.8);
-      else if (r < 0.115 * dj + 0.2 * d) add(T.fern, x, z, 0.8 + rnd() * 0.8);
-      else if (r < 0.115 * dj + 0.24 * d) add(T.bush, x, z, 0.7 + rnd() * 0.7);
-      else if (r < 0.115 * dj + 0.36 * d) add(T.grass, x, z, 0.7 + rnd() * 0.6);
+      else if (r < 0.115 * dj + 0.08 * u) add(T.bigleaf, x, z, 0.8 + rnd() * 0.8);
+      else if (r < 0.115 * dj + 0.2 * u) add(T.fern, x, z, 0.8 + rnd() * 0.8);
+      else if (r < 0.115 * dj + 0.24 * u) add(T.bush, x, z, 0.7 + rnd() * 0.7);
+      else if (r < 0.115 * dj + 0.36 * u) add(T.grass, x, z, 0.7 + rnd() * 0.6);
     } else if (j > -0.06) {
       if (r < 0.006 * d) add(tree(), x, z, 0.7 + rnd() * 0.6);
       else if (r < 0.009 * d) add(T.palmShort, x, z, 0.8 + rnd() * 0.4);
@@ -545,6 +549,8 @@ export class Vegetation {
         if (t.name === 'ribbon') dm.scale.set(1.6 + v, s, 1.6 + v);
         else if (t.name === 'kelp') dm.scale.set(4.5 + v * 2, s, 4.5 + v * 2);
         else if (t.name === 'rock') dm.scale.set(s * (0.8 + v * 0.6), s * (0.6 + r * 0.5), s);
+        else if (t.name === 'grass') dm.scale.set(s, s * (0.65 + v * 0.7), s);
+        else if (t.name === 'bush' || t.name === 'shrub') dm.scale.set(s * (0.85 + v * 0.35), s * (0.75 + ((r * 3.7) % 1) * 0.45), s * (0.85 + ((r * 5.3) % 1) * 0.35));
         else dm.scale.setScalar(s);
         dm.updateMatrix();
         im.setMatrixAt(k, dm.matrix);

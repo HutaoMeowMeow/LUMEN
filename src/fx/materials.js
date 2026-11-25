@@ -36,6 +36,7 @@ uniform vec3 uAbsorb, uWaterShallow, uWaterDeep, uAirFogColor, uSunFogColor, uFl
 uniform vec4 uGlowPos[${MAX_GLOWS}];
 uniform vec3 uGlowCol[${MAX_GLOWS}];
 varying vec3 vWPos;
+float lumenShadowFp = 1.0, lumenShadowSoft = 0.0; // set at the top of main(), read by the patched getShadow()
 float lumenCaustics(vec2 p) {
   float a = texture2D(uCaustics, p * 0.067).r;
   float b = texture2D(uCaustics, p * 0.041 + vec2(0.37, 0.71)).r;
@@ -84,6 +85,17 @@ const LIGHT_GLSL = /* glsl */ `
       tm *= lumenLeaf; // only the green parts of a mixed trunk + foliage mesh
     #endif
     reflectedLight.directDiffuse += directLight.color * material.diffuseColor * tb * (0.3 + 1.4 * tf) * tm;
+  }
+#endif
+#if defined(RE_Direct) && NUM_DIR_LIGHTS > 0
+  {
+    // night only, above water: moonlit silhouette edges so foliage and rocks separate from the dark (shadowed via directLight)
+    float nightRim = (1.0 - smoothstep(0.05, 0.35, uDay)) * step(dBelow, 0.0);
+    if (nightRim > 0.0) {
+      float rim = pow(1.0 - saturate(dot(normal, geometryViewDir)), 3.0);
+      float facing = saturate(dot(normal, directLight.direction) + 0.6);
+      reflectedLight.directDiffuse += directLight.color * material.diffuseColor * rim * facing * nightRim * 0.9;
+    }
   }
 #endif
   if (dBelow > 0.0) {
@@ -230,6 +242,13 @@ float lumenDetail(vec3 p, float leaf) {
 const DETAIL_COLOR = /* glsl */ `
 float lumenAO = 1.0;
 float lumenLeaf = smoothstep(0.0, 0.06, diffuseColor.g - diffuseColor.r);
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+  // shadow texels per screen pixel: widen the PCF kernel to match so distant shadows filter instead of sparkling
+  lumenShadowFp = clamp(0.6 * length(fwidth(vDirectionalShadowCoord[0].xy) * directionalLightShadows[0].shadowMapSize), 1.0, 3.0);
+#endif
+#ifdef TRANSLUCENT_LEAF
+  lumenShadowSoft = 0.3 * lumenLeaf; // thin leaves pass and scatter light: shadows on foliage are never fully black
+#endif
 #ifdef BASE_AO
   lumenAO = mix(uAOMin, 1.0, smoothstep(0.0, uAOHeight, vLPos.y));
 #endif
@@ -237,6 +256,15 @@ float lumenLeaf = smoothstep(0.0, 0.06, diffuseColor.g - diffuseColor.r);
   float lumenH = lumenDetail(vLPos * uDetailScale + vDSeed * 0.173, lumenLeaf);
   diffuseColor.rgb *= mix(1.0 - uDetailCavity, 1.0 + uDetailCavity * 0.3, lumenH);
   lumenAO *= mix(1.0 - uDetailCavity * 0.7, 1.0, lumenH);
+#endif
+`;
+
+// Canopy cards carry outward, clump-blended normals; the double-sided flip pointed every back-facing card into
+// the clump, so about half the leaves shaded near-black and distant canopies broke into dark speckle.
+const LEAF_NORMAL = /* glsl */ `
+float lumenFD = faceDirection;
+#ifdef LEAF_VOLUME
+  if (lumenLeaf > 0.5) { normal *= faceDirection; nonPerturbedNormal = normal; lumenFD = 1.0; }
 #endif
 `;
 
@@ -248,20 +276,26 @@ const DETAIL_NORMAL = /* glsl */ `
   vec2 dH = vec2(dFdx(lumenH), dFdy(lumenH)) * bf;
   vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
   vec3 R1 = cross(sy, normal), R2 = cross(normal, sx);
-  float det = dot(sx, R1) * faceDirection;
+  float det = dot(sx, R1) * lumenFD;
   vec3 grad = sign(det) * (dH.x * R1 + dH.y * R2);
   if (abs(det) > 1e-12) normal = normalize(abs(det) * normal - grad);
   #if DETAIL_KIND == 6
-    roughnessFactor = mix(roughnessFactor, 0.55, lumenLeaf); // waxy tropical leaves catch a soft sheen
+    // waxy tropical leaves catch a soft sheen, faded where each leaf is a pixel or two and the sheen only flickers
+    roughnessFactor = mix(roughnessFactor, 0.55, lumenLeaf * (1.0 - smoothstep(30.0, 90.0, length(vViewPosition))));
   #endif
   roughnessFactor = clamp(roughnessFactor + (0.5 - lumenH) * 0.2, 0.05, 1.0);
 }
 #endif
 `;
 
+// Three's PCF is 5 rotated taps over a fixed radius: widen it to the pixel footprint, and let light through leaves
+const SHADOW_PARS = THREE.ShaderChunk.shadowmap_pars_fragment
+  .replace('vec2 radius = shadowRadius * texelSize;', 'vec2 radius = max(shadowRadius, lumenShadowFp) * texelSize;')
+  .replaceAll('return mix( 1.0, shadow, shadowIntensity );', 'return mix( 1.0, shadow, shadowIntensity * ( 1.0 - lumenShadowSoft ) );');
+
 // Patch a MeshStandardMaterial in place.
 // opts: { sway: 'water'|'wind', swayAmp, swayFreq, swayHeight, uniforms, vertDecl, vertMain, fragDecl, fragColor, fragNormal, fragEmissive, key,
-//         detail: { kind, scale, bump, cavity }, ao: { min, height }, translucent: strength, leafOnly }
+//         detail: { kind, scale, bump, cavity }, ao: { min, height }, translucent: strength, leafOnly, volume (clump canopy normals) }
 export function patchMaterial(mat, opts = {}) {
   const own = {};
   const def = (k, v = 1) => { mat.defines = { ...(mat.defines || {}), [k]: v }; };
@@ -282,6 +316,7 @@ export function patchMaterial(mat, opts = {}) {
   }
   if (opts.translucent) { def('TRANSLUCENT'); own.uTranslucency = { value: opts.translucent }; extraKey += '|t'; }
   if (opts.translucent && opts.leafOnly) { def('TRANSLUCENT_LEAF'); extraKey += 'l'; }
+  if (opts.volume) { def('LEAF_VOLUME'); extraKey += '|v'; }
   if (opts.sway) {
     mat.defines = { ...(mat.defines || {}), SWAY: 1 };
     if (opts.sway === 'wind') mat.defines.SWAY_WIND = 1;
@@ -300,7 +335,8 @@ export function patchMaterial(mat, opts = {}) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\n' + FRAG_COMMON + DETAIL_DECL + (opts.translucent ? 'uniform float uTranslucency;\n' : '') + (opts.fragDecl || ''))
       .replace('#include <color_fragment>', '#include <color_fragment>\n' + (opts.fragColor || '') + DETAIL_COLOR)
-      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + DETAIL_NORMAL + (opts.fragNormal || ''))
+      .replace('#include <shadowmap_pars_fragment>', SHADOW_PARS)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + LEAF_NORMAL + DETAIL_NORMAL + (opts.fragNormal || ''))
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + (opts.fragEmissive || ''))
       .replace('#include <lights_fragment_end>', LIGHT_GLSL)
       .replace('#include <fog_fragment>', FOG_GLSL);
