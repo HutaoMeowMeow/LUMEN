@@ -1,0 +1,12 @@
+3D models in this folder are from Poly Haven (https://polyhaven.com), licensed CC0 1.0 (public domain, no attribution required).
+Downloaded as the 1k glTF variants, unmodified; loaded by src/world/Models.js.
+
+lambis_shell            https://polyhaven.com/a/lambis_shell
+rock_09                 https://polyhaven.com/a/rock_09
+dry_branches_medium_01  https://polyhaven.com/a/dry_branches_medium_01
+calathea_orbifolia_01   https://polyhaven.com/a/calathea_orbifolia_01
+pachira_aquatica_01     https://polyhaven.com/a/pachira_aquatica_01   (variants c, d used as small trees)
+fern_02                 https://polyhaven.com/a/fern_02               (variants b, c)
+anthurium_botany_01     https://polyhaven.com/a/anthurium_botany_01   (variant c)
+
+Multi-plant files are split by node-name suffix at load time; the files themselves are unmodified.

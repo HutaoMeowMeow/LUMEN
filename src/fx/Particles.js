@@ -38,7 +38,7 @@ void main() {
   float px = sz * projectionMatrix[1][1] * uViewH * 0.5 / max(d, 0.1);
   gl_PointSize = clamp(px, 1.0, 8.0);
   vA = keep * min(px * px, 1.0) * (0.4 + 0.6 * h4) * 0.38
-     * smoothstep(0.9, 2.5, d) * smoothstep(22.0, 9.0, d) * exp(-d * uWaterFogDensity) * smoothstep(-0.2, -1.5, p.y);
+     * smoothstep(0.9, 2.5, d) * (1.0 - smoothstep(9.0, 22.0, d)) * exp(-d * uWaterFogDensity) * (1.0 - smoothstep(-1.5, -0.2, p.y));
   // lighting: the depth-scaled water light (darker below the camera, dark in caves), brighter toward the sun, plus the lamp
   vec3 vd = (p - cameraPosition) / max(length(p - cameraPosition), 1e-3);
   float fs = pow(max(dot(vd, normalize(uSunDirW + vec3(0.0, 1.2, 0.0))), 0.0), 5.0) * uDay;
@@ -52,7 +52,7 @@ const SNOW_FRAG = /* glsl */ `
 varying float vA;
 varying vec3 vCol;
 void main() {
-  float a = smoothstep(0.5, 0.12, length(gl_PointCoord - 0.5)) * vA;
+  float a = (1.0 - smoothstep(0.12, 0.5, length(gl_PointCoord - 0.5))) * vA;
   if (a < 0.004) discard;
   gl_FragColor = vec4(vCol, a);
 }`;
@@ -77,8 +77,8 @@ void main() {
   vec2 q = gl_PointCoord - 0.5;
   float r = length(q);
   if (r > 0.5) discard;
-  float rim = smoothstep(0.32, 0.47, r) * smoothstep(0.5, 0.46, r);
-  float hi = smoothstep(0.16, 0.0, length(q - vec2(-0.15, -0.15)));
+  float rim = smoothstep(0.32, 0.47, r) * (1.0 - smoothstep(0.46, 0.5, r));
+  float hi = (1.0 - smoothstep(0.0, 0.16, length(q - vec2(-0.15, -0.15))));
   gl_FragColor = vec4(vColor * (rim + hi * 1.5 + 0.08), (rim * 0.8 + hi + 0.06) * vAlpha);
 }`;
 const SMOKE_FRAG = /* glsl */ `
@@ -86,7 +86,7 @@ varying float vAlpha;
 varying vec3 vColor;
 void main() {
   float r = length(gl_PointCoord - 0.5);
-  float a = smoothstep(0.5, 0.0, r);
+  float a = (1.0 - smoothstep(0.0, 0.5, r));
   gl_FragColor = vec4(vColor, a * a * vAlpha);
 }`;
 
@@ -95,7 +95,7 @@ varying float vAlpha;
 varying vec3 vColor;
 void main() {
   float r = length(gl_PointCoord - 0.5);
-  float a = exp(-r * r * 60.0) + smoothstep(0.5, 0.0, r) * 0.12; // tight core, faint glow
+  float a = exp(-r * r * 60.0) + (1.0 - smoothstep(0.0, 0.5, r)) * 0.12; // tight core, faint glow
   gl_FragColor = vec4(vColor, a * vAlpha);
 }`;
 

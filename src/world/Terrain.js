@@ -58,10 +58,11 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     vec4 fA = texture2D(uNoise, P.xz * 1.3);  // grain / leaf scale (~2-10 cm)
     vec4 fB = texture2D(uNoise, P.xz * 0.11); // patch scale (~1-9 m)
     // sand: grain jitter, dark mineral specks and pale shell grit
-    float grain = fA.g - 0.5;
-    sand *= 1.0 + grain * 0.16 * fine;
-    sand = mix(sand, sand * vec3(0.55, 0.52, 0.5), smoothstep(0.8, 0.95, fA.a) * 0.5 * fine);
-    sand = mix(sand, vec3(0.97, 0.94, 0.88), smoothstep(0.82, 0.95, fA.r) * 0.35 * fine);
+    float fineS = fine * fine; // sand speckle drops off sooner than leaf litter: beyond ~30 m it only shimmers
+    float grain = (fA.g - 0.5) * 0.7 + (texture2D(uNoise, P.xz * 0.42).b - 0.5) * 0.5; // two grain scales, no single repeating size
+    sand *= 1.0 + grain * 0.13 * fineS;
+    sand = mix(sand, sand * vec3(0.62, 0.58, 0.55), smoothstep(0.86, 0.97, fA.a) * 0.35 * fineS);
+    sand = mix(sand, sand * vec3(1.18, 1.16, 1.12), smoothstep(0.88, 0.97, fA.r) * 0.3 * fineS); // shell grit: a lift, not white dots
     // tide line: wavy wet band, damp darker sand above it, a thin wrack of dried weed at the high-water mark
     float wl = 1.05 + 0.4 * (fB.r - 0.5) + 0.18 * sin(P.x * 0.09 + P.z * 0.06 + 6.0 * n3);
     float wet = 1.0 - smoothstep(wl - 0.12, wl + 0.08, y);
@@ -74,17 +75,17 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     sand = mix(sand, mix(vec3(0.2, 0.17, 0.11), vec3(0.36, 0.3, 0.18), fA.g), wrack * 0.75);
     float sandRough = mix(mix(0.93 + 0.07 * fA.g, 0.82, damp), 0.42 + 0.08 * fA.r, wet);
     // forest floor: leaf litter mosaic, humus, root/twig lines and pebbles; grass ground cover in the open
-    vec3 leafC = mix(vec3(0.3, 0.2, 0.11), vec3(0.52, 0.36, 0.17), fA.g);
-    leafC = mix(leafC, vec3(0.42, 0.4, 0.19), smoothstep(0.62, 0.8, fA.r) * 0.6); // fresh yellow-green fall
-    leafC = mix(leafC, vec3(0.62, 0.42, 0.2), smoothstep(0.75, 0.9, fA.b) * 0.4);
-    leafC = mix(vec3(0.36, 0.26, 0.15), leafC, fine); // far: average colour, no speckle
-    vec3 humus = vec3(0.17, 0.13, 0.09) * (0.85 + 0.3 * n2);
+    vec3 leafC = mix(vec3(0.2, 0.13, 0.07), vec3(0.38, 0.25, 0.11), fA.g); // tropical litter is dark and damp; pale tan read as beach sand
+    leafC = mix(leafC, vec3(0.3, 0.3, 0.12), smoothstep(0.62, 0.8, fA.r) * 0.6); // fresh yellow-green fall
+    leafC = mix(leafC, vec3(0.48, 0.3, 0.13), smoothstep(0.75, 0.9, fA.b) * 0.4);
+    leafC = mix(vec3(0.26, 0.18, 0.1), leafC, fine); // far: average colour, no speckle
+    vec3 humus = mix(vec3(0.12, 0.09, 0.06), vec3(0.12, 0.17, 0.07), smoothstep(0.5, 0.8, fB.r)) * (0.85 + 0.3 * n2); // with mossy damp hollows
     vec3 floorC = mix(humus, leafC, smoothstep(0.25, 0.6, fA.a + 0.25 * fB.g) * (0.55 + 0.45 * fine));
     float twig = smoothstep(0.9, 0.97, texture2D(uNoise, P.xz * vec2(0.23, 0.61) + n1).a) * fine;
     floorC = mix(floorC, vec3(0.25, 0.19, 0.13), twig * 0.7);
     float pebble = smoothstep(0.83, 0.9, texture2D(uNoise, P.xz * 1.1 + 0.37).r) * fine;
     floorC = mix(floorC, vec3(0.42, 0.4, 0.37) * (0.8 + 0.4 * fA.g), pebble * 0.8);
-    float litter = smoothstep(0.42, 0.7, fB.b + 0.35 * (n1 - 0.5)) * smoothstep(3.5, 7.0, y);
+    float litter = smoothstep(0.3, 0.6, fB.b + 0.35 * (n1 - 0.5)) * smoothstep(3.5, 7.0, y);
     grass *= mix(vec3(1.0), vec3(1.12, 1.05, 0.8), smoothstep(0.55, 0.85, fB.r)); // sun-bleached swathes
     grass *= 1.0 + (fA.g - 0.5) * 0.2 * fine;
     float beach = 1.0 - smoothstep(1.6, 3.2 + 1.5 * n1, y + 0.9 * (fB.g - 0.5));
@@ -107,14 +108,14 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     col = mix(col, ash, bio.a * (1.0 - beach * 0.5));
     rough = mix(rough, 0.97, bio.a);
   } else {
-    float depthT = smoothstep(-12.0, -45.0, y + 10.0 * (n3 - 0.5));
+    float depthT = (1.0 - smoothstep(-45.0, -12.0, y + 10.0 * (n3 - 0.5)));
     col = mix(sand, silt, depthT);
     col *= 0.85 + 0.25 * smoothstep(0.3, 0.7, n2);
     vec3 reefC = mix(vec3(0.6, 0.42, 0.44), vec3(0.48, 0.5, 0.36), n2);
     col = mix(col, reefC, bio.r * smoothstep(0.45, 0.65, n1) * 0.7);
     col = mix(col, silt * vec3(0.75, 0.85, 0.7), bio.g * 0.6);
     col = mix(col, rock * 0.85, smoothstep(0.3, 0.5, slope + 0.12 * n2));
-    col = mix(col, ooze, smoothstep(-110.0, -180.0, y) * max(bio.b, 0.6));
+    col = mix(col, ooze, (1.0 - smoothstep(-180.0, -110.0, y)) * max(bio.b, 0.6));
     col = mix(col, ash, bio.a * 0.8);
     col = mix(col, sand * 0.56, smoothstep(-1.5, 0.6, y)); // wet sand at the waterline, matching the band above
     rough = mix(0.95, 0.45, smoothstep(-1.0, 0.6, y));

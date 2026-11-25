@@ -31,7 +31,7 @@ void main() {
   edge *= edge;
   float along = smoothstep(0.0, 0.06, vUv.y) * pow(1.0 - vUv.y, 2.2);
   float flick = 0.55 + 0.45 * sin(uTime * (0.4 + fract(vPhase * 7.0) * 0.5) + vPhase * 6.28);
-  float fade = smoothstep(${RANGE / 2}.0, ${RANGE / 2 - 18}.0, vDist);
+  float fade = 1.0 - smoothstep(${RANGE / 2 - 18}.0, ${RANGE / 2}.0, vDist);
   gl_FragColor = vec4(uColor * edge * along * flick * fade * uStrength, 1.0);
 }`;
 

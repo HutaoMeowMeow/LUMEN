@@ -9,6 +9,7 @@ import { buildCaves } from '../world/CaveMeshes.js';
 import { Colliders } from '../world/Colliders.js';
 import { Structures } from '../world/Structures.js';
 import { Vegetation } from '../world/Vegetation.js';
+import { loadModels } from '../world/Models.js';
 import { U, MAX_GLOWS } from '../fx/materials.js';
 import { Caustics } from '../fx/Caustics.js';
 import { LightShafts } from '../fx/LightShafts.js';
@@ -94,6 +95,8 @@ export class Game {
       this.colliders = new Colliders();
       this.structures = new Structures(scene, world, this.colliders);
     });
+    ui.setLoading(0.875, 'Gathering shells and stones');
+    await loadModels();
     await step(0.89, 'Growing reefs and forests', () => {
       this.vegetation = new Vegetation(scene, world, this.quality, this.colliders, this.structures.emitters);
     });

@@ -87,6 +87,10 @@ const LIGHT_GLSL = /* glsl */ `
     reflectedLight.directDiffuse += directLight.color * material.diffuseColor * tb * (0.3 + 1.4 * tf) * tm;
   }
 #endif
+#if defined(TRANSLUCENT_LEAF) && NUM_HEMI_LIGHTS > 0
+  // canopies are porous: downward-facing leaves still see sky through the gaps, instead of only the dark ground colour
+  reflectedLight.indirectDiffuse += material.diffuseColor * hemisphereLights[0].skyColor * lumenLeaf * (0.5 - 0.5 * nW.y) * 0.3 * step(dBelow, 0.0);
+#endif
 #if defined(RE_Direct) && NUM_DIR_LIGHTS > 0
   {
     // night only, above water: moonlit silhouette edges so foliage and rocks separate from the dark (shadowed via directLight)
@@ -132,7 +136,7 @@ const LIGHT_GLSL = /* glsl */ `
     float d = length(L);
     vec3 l = L / max(d, 1e-3);
     float cd = dot(-l, uFlashDir);
-    float fa = uFlash * (0.25 * smoothstep(0.55, 0.85, cd) + smoothstep(0.82, 0.96, cd)) / (1.0 + 0.01 * d * d) * smoothstep(70.0, 4.0, d);
+    float fa = uFlash * (0.25 * smoothstep(0.55, 0.85, cd) + smoothstep(0.82, 0.96, cd)) / (1.0 + 0.01 * d * d) * (1.0 - smoothstep(4.0, 70.0, d));
     vec3 fl = vec3(1.0, 0.95, 0.85) * fa * max(dot(nW, l), 0.0) * 3.0;
     if (uCamUnder > 0.5) fl *= exp(-uAbsorb * d * 0.5);
     extra += fl;
@@ -240,6 +244,15 @@ float lumenDetail(vec3 p, float leaf) {
 `;
 
 const DETAIL_COLOR = /* glsl */ `
+#if defined(LEAF_CARDS) && defined(USE_MAP)
+{
+  // mip averaging shrinks alpha-tested leaf coverage with distance (canopies thin to lace); boost alpha per mip level
+  vec2 lumenTs = vec2(textureSize(map, 0));
+  vec2 lumenDx = dFdx(vMapUv) * lumenTs, lumenDy = dFdy(vMapUv) * lumenTs;
+  float lumenMip = max(0.0, 0.5 * log2(max(dot(lumenDx, lumenDx), dot(lumenDy, lumenDy))));
+  diffuseColor.a *= 1.0 + 0.28 * lumenMip;
+}
+#endif
 float lumenAO = 1.0;
 float lumenLeaf = smoothstep(0.0, 0.06, diffuseColor.g - diffuseColor.r);
 #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
@@ -256,6 +269,16 @@ float lumenLeaf = smoothstep(0.0, 0.06, diffuseColor.g - diffuseColor.r);
   float lumenH = lumenDetail(vLPos * uDetailScale + vDSeed * 0.173, lumenLeaf);
   diffuseColor.rgb *= mix(1.0 - uDetailCavity, 1.0 + uDetailCavity * 0.3, lumenH);
   lumenAO *= mix(1.0 - uDetailCavity * 0.7, 1.0, lumenH);
+  #if DETAIL_KIND == 6
+  {
+    // crown-scale colour patches (new yellow flush, older blue-green leaves) and a lift far away, where a crown is
+    // many leaves plus sky gaps per pixel rather than its darkest leaf albedo
+    float pv = lumenT3(vLPos * 0.18 + vDSeed * 0.031).b;
+    vec3 tint = mix(vec3(0.9, 1.0, 1.06), vec3(1.12, 1.06, 0.82), smoothstep(0.3, 0.75, pv));
+    float far = smoothstep(60.0, 260.0, length(vViewPosition));
+    diffuseColor.rgb *= mix(vec3(1.0), tint * (1.0 + 0.22 * far), lumenLeaf);
+  }
+  #endif
 #endif
 `;
 
@@ -295,7 +318,8 @@ const SHADOW_PARS = THREE.ShaderChunk.shadowmap_pars_fragment
 
 // Patch a MeshStandardMaterial in place.
 // opts: { sway: 'water'|'wind', swayAmp, swayFreq, swayHeight, uniforms, vertDecl, vertMain, fragDecl, fragColor, fragNormal, fragEmissive, key,
-//         detail: { kind, scale, bump, cavity }, ao: { min, height }, translucent: strength, leafOnly, volume (clump canopy normals) }
+//         detail: { kind, scale, bump, cavity }, ao: { min, height }, translucent: strength, leafOnly, volume (clump canopy normals),
+//         cards (alpha-tested leaf atlas in map: keep coverage across mips) }
 export function patchMaterial(mat, opts = {}) {
   const own = {};
   const def = (k, v = 1) => { mat.defines = { ...(mat.defines || {}), [k]: v }; };
@@ -317,6 +341,7 @@ export function patchMaterial(mat, opts = {}) {
   if (opts.translucent) { def('TRANSLUCENT'); own.uTranslucency = { value: opts.translucent }; extraKey += '|t'; }
   if (opts.translucent && opts.leafOnly) { def('TRANSLUCENT_LEAF'); extraKey += 'l'; }
   if (opts.volume) { def('LEAF_VOLUME'); extraKey += '|v'; }
+  if (opts.cards) { def('LEAF_CARDS'); extraKey += '|c'; }
   if (opts.sway) {
     mat.defines = { ...(mat.defines || {}), SWAY: 1 };
     if (opts.sway === 'wind') mat.defines.SWAY_WIND = 1;

@@ -145,13 +145,26 @@ void main() {
     // foam: shoreline + crests
     float foamN = texture2D(uNormalTex, vWPos.xz * 0.19 + uTime * 0.01).a;
     float foamF = texture2D(uNormalTex, vWPos.xz * 0.53 - uTime * 0.02).a;
-    float lace = smoothstep(0.35, 0.7, foamN * 0.6 + foamF * 0.6 - 0.1); // broken, lacy foam texture
-    float swash = (1.0 - smoothstep(0.0, 0.7, depth)) * smoothstep(0.2, 0.6, foamN + 0.3 * sin(uTime * 0.9 + foamF * 2.0));
-    float bands = (1.0 - smoothstep(0.3, 3.2, depth)) * smoothstep(0.55, 0.95, sin(depth * 2.6 - uTime * 1.3 + foamN * 2.0)) * lace;
-    float shore = max(swash * (0.55 + 0.45 * lace), bands * 0.8);
+    float foamL = texture2D(uNormalTex, vWPos.xz * 0.021 + vec2(0.37, 0.11)).a; // coast-scale: some stretches surf harder
+    // lace: holes open in the foam sheet; the fine layer fades out with distance so it never speckles
+    float laceN = foamN * 0.75 + (foamF - 0.5) * 0.5 * fineFade;
+    float lace = smoothstep(0.32, 0.62, laceN);
+    // swash cycle: each wave runs up the beach as a fresh sheet and drains back, leaving thinning lace
+    float ph = fract(uTime * 0.085 + foamL * 0.7 + foamN * 0.12);
+    float reach = 0.85 * (1.0 - ph) * (1.0 - ph) + 0.05;
+    float run = 1.0 - smoothstep(reach - 0.12, reach + 0.04, depth);
+    float sheet = run * mix(0.9, 0.35, ph) * (0.45 + 0.55 * lace);
+    float edgeL = (1.0 - smoothstep(0.0, 0.1, abs(depth - reach))) * smoothstep(0.3, 0.55, foamN) * (1.0 - ph); // bright leading edge
+    float swash = max(sheet, edgeL);
+    // broken surf lines further out, warped so they never read as regular rings
+    float bp = depth * 1.7 - uTime * 1.1 + foamN * 3.2 + foamL * 6.0;
+    float bands = (1.0 - smoothstep(0.4, 3.4, depth)) * smoothstep(0.7, 0.97, sin(bp)) * smoothstep(0.3, 0.6, laceN + 0.15 * sin(bp * 0.5));
+    float shore = max(swash, bands * 0.65) * (0.6 + 0.4 * smoothstep(0.25, 0.65, foamL));
     float crest = smoothstep(0.55, 0.95, vCrest) * smoothstep(0.5, 0.8, foamN);
     float foam = clamp(shore + crest * detailFade, 0.0, 1.0);
-    col = mix(col, vec3(0.92, 0.96, 1.0) * (0.3 + 0.7 * uDay), foam * 0.85);
+    // foam is lit like the scene (sun/moon + sky), never self-bright, so it holds back at dusk and night
+    vec3 foamC = vec3(0.8, 0.84, 0.86) * (0.22 + 0.55 * uDay) + uLightColor * 0.12 * max(uLightDir.y, 0.0);
+    col = mix(col, foamC, foam * 0.8);
     // bioluminescent plankton: faint blue-green sparks where the surf is breaking, night only
     float spark = smoothstep(0.72, 0.95, foamF) * smoothstep(0.3, 0.9, sin(uTime * 1.7 + foamN * 14.0) * 0.5 + 0.5);
     col += vec3(0.05, 0.5, 0.75) * max(swash, bands) * spark * night * smoothstep(0.6, 0.95, night) * 0.4 * detailFade;

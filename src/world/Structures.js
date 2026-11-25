@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { stdMat, U } from '../fx/materials.js';
-import { getNoiseTexture } from '../fx/textures.js';
+import { getNoiseTexture, getLeafTexture } from '../fx/textures.js';
 import { POIS, ISLANDS, HAVEN } from './layout.js';
 import { broadleafTree } from './geometries.js';
 import { mulberry32, createNoise } from './noise.js';
@@ -34,7 +34,7 @@ function materials() {
       float g = texture2D(uNoise, vWPos.xz * 0.043 + vWPos.y * 0.031).r;
       float g2 = texture2D(uNoise, vec2(vWPos.x + vWPos.z, vWPos.y) * 0.11).g;
       diffuseColor.rgb *= mix(0.6, 1.08, g) * mix(0.85, 1.05, g2);
-      float wet = smoothstep(0.0, -3.0, vWPos.y - uWaterLevel);
+      float wet = (1.0 - smoothstep(-3.0, 0.0, vWPos.y - uWaterLevel));
       float algae = smoothstep(0.45, 0.75, g * 0.6 + g2 * 0.5) * wet;
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.3, 0.19), algae * 0.6);
     }`;
@@ -279,8 +279,8 @@ function giantTree(S) {
   g.scale(sc, sc * 1.15, sc);
   g.translate(best.x, best.h - 0.6, best.z);
   g.computeBoundingSphere();
-  const m = addMesh(S, g, stdMat({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide }, {
-    key: 'giant-tree', detail: { kind: 'plant', scale: 0.25, bump: 0.05, cavity: 0.35 }, translucent: 0.55, leafOnly: true,
+  const m = addMesh(S, g, stdMat({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide, map: getLeafTexture(), alphaTest: 0.5 }, {
+    key: 'giant-tree', detail: { kind: 'plant', scale: 0.25, bump: 0.05, cavity: 0.35 }, translucent: 0.55, leafOnly: true, volume: true, cards: true,
   }), 0);
   m.castShadow = m.receiveShadow = true;
   S.colliders.addCapsule(best.x, best.h - 1, best.z, best.x, best.h + 5 * sc, best.z, 0.42 * sc);

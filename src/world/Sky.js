@@ -36,6 +36,10 @@ vec3 skyBase(vec3 d) {
   vec3 zen = mix(vec3(0.004, 0.01, 0.03), mix(vec3(0.07, 0.17, 0.42), vec3(0.11, 0.3, 0.72), smoothstep(0.05, 0.45, sy)), day);
   vec3 hor = mix(vec3(0.018, 0.035, 0.07), vec3(0.62, 0.76, 0.9), day);
   zen += vec3(0.02, 0.045, 0.11) * tw;
+  // golden hour: the low atmosphere loses its blue before the warm glow is added, so the sunset reads amber, not white
+  float gold = dusk * day;
+  hor *= mix(vec3(1.0), vec3(0.92, 0.7, 0.56), gold * 0.75);
+  zen *= mix(vec3(1.0), vec3(0.72, 0.8, 1.0), gold * 0.5);
   hor += vec3(0.05, 0.06, 0.1) * tw;
   // night: moonlight scatters a faint blue into the whole sky, plus a soft halo around the moon
   float night = skyNight(), mUp = skyMoonUp() * night;
@@ -51,7 +55,8 @@ vec3 skyBase(vec3 d) {
   // horizon haze: bright aerosol band, warmed toward the sun at dusk
   vec3 haze = mix(hor * 1.06 + 0.025, vec3(1.0, 0.62, 0.4), dusk * (0.35 + 0.4 * max(az, 0.0)));
   col = mix(col, haze, exp(-h * 14.0) * 0.45 * min(day + 0.6 * dusk, 1.0));
-  col += vec3(0.04, 0.05, 0.07) * pow(mAng, 24.0) * mUp + vec3(0.1, 0.11, 0.13) * pow(mAng, 900.0) * mUp;
+  col += (vec3(0.012, 0.015, 0.022) * pow(mAng, 6.0) * (0.3 + 0.7 * uCloudCover) + vec3(0.035, 0.044, 0.062) * pow(mAng, 28.0)
+    + vec3(0.1, 0.11, 0.13) * pow(mAng, 900.0)) * mUp;
   float sunAmt = max(mu, 0.0);
   // sunrise / sunset: warm glow spread along the horizon around the sun's azimuth, golden right above it,
   // and the pink belt of Venus over the earth's shadow on the opposite side
@@ -78,7 +83,7 @@ float skyCraters(vec2 p, float s) {
     float rad = 0.18 + 0.3 * skyHash(c + o + 5.3);
     float q = length(f - ctr) / rad;
     // bright raised rim, darker bowl
-    r += (smoothstep(1.15, 0.9, q) * smoothstep(0.7, 0.95, q) * 0.5 - smoothstep(0.95, 0.4, q) * 0.35) * (h - 0.45) * 1.8;
+    r += ((1.0 - smoothstep(0.9, 1.15, q)) * smoothstep(0.7, 0.95, q) * 0.5 - (1.0 - smoothstep(0.4, 0.95, q)) * 0.35) * (h - 0.45) * 1.8;
   }
   return r;
 }
@@ -88,7 +93,7 @@ vec4 skyMoon(vec3 d) {
   vec3 mU = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0))), mV = cross(mU, uMoonDir);
   vec2 l = vec2(dot(d, mU), dot(d, mV)) / 0.031;
   float rr = length(l);
-  float a = smoothstep(1.0, 0.965, rr);
+  float a = (1.0 - smoothstep(0.965, 1.0, rr));
   if (a <= 0.0) return vec4(0.0);
   vec3 N = l.x * mU + l.y * mV - sqrt(max(0.0, 1.0 - rr * rr)) * uMoonDir;
   float lit = clamp(dot(N, uSunDir) * 1.1 + 0.08, 0.0, 1.0);
@@ -129,11 +134,13 @@ vec4 skyClouds(vec3 d, float t) {
   float sunAmt = max(dot(d, uSunDir), 0.0);
   vec3 sunC = skySunTint();
   vec3 ambC = mix(vec3(0.36, 0.33, 0.42), vec3(0.6, 0.67, 0.78), smoothstep(0.0, 0.35, sy));
+  ambC = mix(ambC, vec3(0.5, 0.37, 0.4), dusk * 0.6); // rose-grey bodies at golden hour
   float thinD = clamp(1.0 - c, 0.0, 1.0) * smoothstep(0.0, 0.3, c);
   vec3 dc = ambC * (1.0 - 0.35 * thick) * 0.8 + sunC * sl * (0.55 + 0.45 * pow(sunAmt, 4.0));
   dc += sunC * thinD * pow(sunAmt, 12.0) * 1.6 * smoothstep(-0.06, 0.04, sy);
   // just after sunset / before sunrise the sun lights the cloud bases from below the horizon
-  float underLit = (1.0 - smoothstep(-0.04, 0.06, sy)) * smoothstep(-0.2, -0.06, sy);
+  // (and while it is low: a sun under the deck warms the bases through golden hour)
+  float underLit = (1.0 - smoothstep(0.08, 0.26, sy)) * smoothstep(-0.2, -0.06, sy) * mix(1.0, 0.6, smoothstep(0.0, 0.1, sy));
   dc += vec3(1.0, 0.38, 0.18) * underLit * (0.4 + 0.8 * pow(sunAmt, 2.0)) * (1.0 - 0.6 * thick);
   // night: dim blue-grey bodies, brighter toward the moon, silver lining on thin edges near it
   float mUp = skyMoonUp(), mAng = max(dot(d, uMoonDir), 0.0);
@@ -141,8 +148,25 @@ vec4 skyClouds(vec3 d, float t) {
     + vec3(0.3, 0.32, 0.38) * thinD * pow(mAng, 30.0) * mUp;
   nc += vec3(0.55, 0.6, 0.75) * uLightning.w * pow(max(dot(d, uLightning.xyz), 0.0), 5.0) * (0.4 + c);
   vec3 cc = mix(nc, dc, max(day, dusk));
-  cc = mix(cc, skyBase(d), (1.0 - smoothstep(0.0, 0.3, d.y)) * 0.55); // aerial perspective on distant clouds
+  // low layer: lumpy cumulus on a nearer deck (bigger on screen, faster), flat shadowed bases and lit crowns.
+  // Density is probed toward the light so each puff shades across its body instead of reading as a flat grey shape.
+  vec2 uv3 = d.xz * (sqrt(d.y * d.y + 0.0404) - d.y) / 0.02 * 0.75 + vec2(t * 0.014, t * 0.006) + w * 0.5;
+  float n3 = skyFbm(uv3 + 57.0);
+  float cov3 = mix(0.8, 0.52, uCloudCover) + (skyNoise(uv3 * 0.12 + 9.0) - 0.5) * 0.18;
+  n3 -= (skyNoise(uv3 * 7.0) - 0.5) * 0.06 * (1.0 - smoothstep(cov3, cov3 + 0.16, n3)); // frayed rims
+  float c3 = smoothstep(cov3, cov3 + 0.1, n3), th3 = smoothstep(cov3, cov3 + 0.3, n3);
+  float p3 = smoothstep(cov3, cov3 + 0.22, skyFbm3(uv3 + 57.0 + L.xz * 0.09));
+  float lit3 = exp(-2.2 * p3);
+  vec3 dc3 = ambC * (0.9 - 0.5 * th3) * 0.75 + sunC * lit3 * (0.6 + 0.5 * pow(sunAmt, 4.0)) * smoothstep(-0.06, 0.04, sy)
+    + sunC * c3 * (1.0 - th3) * pow(sunAmt, 10.0) * 1.4 * smoothstep(-0.06, 0.04, sy)
+    + vec3(1.0, 0.38, 0.18) * underLit * (0.35 + 0.8 * pow(sunAmt, 2.0)) * (1.0 - 0.5 * th3);
+  vec3 nc3 = vec3(0.01, 0.013, 0.02) + vec3(0.07, 0.08, 0.105) * mUp * lit3 * (0.3 + 0.7 * pow(mAng, 4.0))
+    + vec3(0.32, 0.34, 0.4) * c3 * (1.0 - th3) * pow(mAng, 24.0) * mUp; // moonlit edges
+  nc3 += vec3(0.55, 0.6, 0.75) * uLightning.w * pow(max(dot(d, uLightning.xyz), 0.0), 4.0) * (0.5 + th3);
   float a = 1.0 - (1.0 - c) * (1.0 - c2);
+  cc = mix(cc, mix(nc3, dc3, max(day, dusk)), c3);
+  a = 1.0 - (1.0 - a) * (1.0 - c3);
+  cc = mix(cc, skyBase(d), (1.0 - smoothstep(0.0, 0.3, d.y)) * 0.55); // aerial perspective on distant clouds
   return vec4(cc, a * smoothstep(0.01, 0.15, d.y));
 }
 `;
@@ -170,11 +194,12 @@ vec3 starLayer(vec3 p, float S, float dens, float gain, float px, float t, float
   vec3 h = vec3(skyHash(k), skyHash(k + 7.3), skyHash(k + 13.9));
   vec3 c = normalize(cell + 0.35 + h * 0.3) * S; // kept off the cell edges so the gaussian is never clipped square
   float dist = length(q - c);
-  float mag = pow(skyHash(k + 21.1), 7.0);
-  float sz = min(px * S * (0.75 + 0.8 * mag), 0.16);
-  float I = exp(-dist * dist / (sz * sz)) * (0.06 + 1.7 * mag) * gain;
-  I *= 1.0 + tw * sin(t * (2.0 + h.x * 3.0) + h.y * 60.0) * sin(t * 1.3 + h.z * 40.0);
-  vec3 col = h.z < 0.28 ? vec3(0.72, 0.82, 1.0) : h.z < 0.78 ? vec3(0.93, 0.96, 1.0) : vec3(1.0, 0.88, 0.72);
+  float mag = pow(skyHash(k + 21.1), 6.0); // steep: nearly all at the faint limit, a rare few much brighter
+  float sz = clamp(px * S * (0.9 + 0.5 * mag), 0.01, 0.16); // never under a pixel, so stars do not shimmer as the view turns
+  float I = exp(-dist * dist / (sz * sz)) * (0.04 + mag) * gain;
+  I *= 1.0 + tw * mag * sin(t * (2.0 + h.x * 3.0) + h.y * 60.0) * sin(t * 1.3 + h.z * 40.0); // only bright stars scintillate
+  // spectral spread: mostly white, some blue-white, fewer yellow and a rare orange giant
+  vec3 col = h.z < 0.2 ? vec3(0.74, 0.83, 1.0) : h.z < 0.72 ? vec3(0.95, 0.97, 1.0) : h.z < 0.92 ? vec3(1.0, 0.93, 0.8) : vec3(1.0, 0.79, 0.6);
   return col * I;
 }
 void main() {
@@ -190,21 +215,30 @@ void main() {
     // celestial frame: the stars turn with the sun's arc (same axis), so they keep their place in the sky
     float ca = cos(uStarAng), sa = sin(uStarAng);
     vec3 s = vec3(ca * d.x + sa * d.y, -sa * d.x + ca * d.y, d.z);
-    float ext = smoothstep(0.0, 0.22, d.y) * night * (1.0 - 0.7 * pow(mAng, 6.0) * mUp); // horizon haze, moon glare
-    float tw = 0.3 * (1.0 - smoothstep(0.05, 0.6, d.y)) + 0.06;
-    // Milky Way: an irregular band with clumped density and dark dust lanes
-    float bd = dot(s, normalize(vec3(0.35, 0.55, 0.76)));
-    float band = exp(-bd * bd * 12.0);
+    // atmospheric extinction by air mass: stars dim and redden toward the horizon, faint ones vanish first;
+    // the moon washes out the faint end everywhere and glares around itself
+    float air = 1.0 / (d.y + 0.06);
+    float ext = exp(-0.09 * (air - 0.94)) * smoothstep(0.0, 0.08, d.y) * night * (1.0 - 0.7 * pow(mAng, 6.0) * mUp);
+    vec3 redden = mix(vec3(1.0), vec3(1.0, 0.8, 0.58), 1.0 - exp(-0.06 * (air - 0.94)));
+    float wash = 1.0 - 0.75 * mUp, washB = 1.0 - 0.35 * mUp; // moonlight hides most of the faint field, dims the bright few
+    float tw = 0.45 * (1.0 - smoothstep(0.05, 0.6, d.y)) + 0.08;
+    // Milky Way: a restrained band, brighter and warmer toward its core, clumped, split by dark dust lanes
+    vec3 mwN = normalize(vec3(0.35, 0.55, 0.76)), mwC = normalize(cross(mwN, vec3(0.0, 1.0, 0.0)));
+    float bd = dot(s, mwN);
+    float core = pow(max(dot(s, mwC), 0.0), 3.0) * exp(-bd * bd * 30.0);
+    float band = exp(-bd * bd * 14.0) * (0.55 + 0.9 * core);
     float clump = skyFbm(s.xy * 3.0 + s.z * 2.0) * skyFbm(s.yz * 3.5 + 5.0) * 2.4;
     float lane = smoothstep(0.42, 0.68, skyFbm(s.xz * 8.0 + 1.7)) * exp(-bd * bd * 70.0);
-    float mw = band * clamp(clump, 0.0, 1.4) * (1.0 - 0.75 * lane);
-    col += vec3(0.03, 0.033, 0.045) * mw * ext * (1.0 - 0.6 * mUp);
+    float mw = band * clamp(clump, 0.0, 1.4) * (1.0 - 0.8 * lane);
+    col += mix(vec3(0.026, 0.03, 0.042), vec3(0.04, 0.035, 0.03), core) * mw * ext * (1.0 - 0.8 * mUp);
     // constellation-scale clustering of the bright stars
     float group = smoothstep(0.5, 0.78, skyFbm(s.xz * 2.2 + s.y * 1.3 + 11.0));
-    vec3 st = starLayer(s, 110.0, 0.05 + 0.5 * mw, 0.3, px, uTime, tw)
-            + starLayer(s, 60.0, 0.1 + 0.15 * mw, 0.7, px, uTime, tw)
-            + starLayer(s, 28.0, 0.03 + 0.2 * group, 1.6, px, uTime, tw);
-    col += st * ext;
+    // four magnitude classes: dense faint dust (packed into the Milky Way), the common field, fewer bright, rare beacons
+    vec3 st = starLayer(s, 150.0, 0.16 + 0.55 * mw, 0.16 * wash, px, uTime, tw)
+            + starLayer(s, 75.0, 0.1 + 0.2 * mw, 0.42 * wash, px, uTime, tw)
+            + starLayer(s, 34.0, 0.02 + 0.1 * group, washB, px, uTime, tw)   // ~100 bright stars overhead, clustered
+            + starLayer(s, 14.0, 0.035, 2.4 * washB, px, uTime, tw);    // a few dozen beacons, not a hundred-plus
+    col += st * ext * redden;
     // rare meteor: a short streak along a great circle, about one a minute on average
     float P = 9.0, slot = floor(uTime / P), r = skyHash(vec2(slot, 7.13));
     if (r < 0.14) {
@@ -227,14 +261,14 @@ void main() {
   vec4 moon = skyMoon(d);
   col = mix(col, max(col, moon.rgb * mix(0.3, 1.0, night)), moon.a);
   vec4 cl = skyClouds(d, uTime);
-  col = mix(col, cl.rgb, cl.a * 0.92);
+  col = mix(col, cl.rgb, cl.a);
   // distant island silhouettes on the horizon, hazed toward the sky colour
   float az = atan(d.z, d.x), isl = 0.0;
   for (int i = 0; i < 4; i++) {
     float fi = float(i), c0 = -2.6 + fi * 1.55 + skyHash(vec2(fi, 1.0)) * 0.6, wd = 0.05 + 0.09 * skyHash(vec2(fi, 2.0));
     float x = (az - c0) / wd;
     float hgt = (0.004 + 0.01 * skyHash(vec2(fi, 3.0))) * sqrt(max(0.0, 1.0 - x * x)) * (0.75 + 0.35 * skyNoise(vec2(az * 90.0, fi)));
-    isl = max(isl, smoothstep(hgt, hgt - 0.0012, d.y) * step(0.0005, hgt));
+    isl = max(isl, (1.0 - smoothstep(hgt - 0.0012, hgt, d.y)) * step(0.0005, hgt));
   }
   vec3 hz = skyBase(vec3(d.x, 0.002, d.z));
   col = mix(col, hz * mix(0.55, 0.82, smoothstep(-0.12, 0.25, uSunDir.y)), isl * step(-0.02, d.y));
