@@ -109,12 +109,13 @@ vec4 skyClouds(vec3 d, float t) {
   // mid layer: domain-warped billows, so no obvious tiling
   vec2 uv = base * 1.6 + vec2(t * 0.006, t * 0.0025);
   vec2 w = vec2(skyNoise(uv * 0.7 + 3.1), skyNoise(uv * 0.7 + 7.7)) - 0.5;
-  vec2 q = uv + w * 1.1;
+  vec2 q = uv + w * 0.45; // stronger warp smeared the billows into brush strokes
   float n = skyFbm(q);
   // weather scale: clear gaps and denser banks within one view; fine erosion frays the edges
   float cov = mix(0.66, 0.34, uCloudCover) + (skyNoise(uv * 0.16 + 40.0) - 0.5) * 0.22;
+  n += (1.0 - abs(2.0 * skyNoise(q * 3.2 + 5.0) - 1.0) - 0.6) * 0.07 * (1.0 - smoothstep(cov, cov + 0.2, n)); // rounded heaps at the rims
   n -= (skyNoise(q * 9.0) - 0.5) * 0.07 * (1.0 - smoothstep(cov, cov + 0.2, n));
-  float c = smoothstep(cov, cov + 0.24, n);
+  float c = smoothstep(cov, cov + 0.16, n);
   float thick = smoothstep(cov, cov + 0.5, n);
   // high layer: thin wisps stretched along the wind, drifting faster
   vec2 uv2 = mat2(0.8, -0.6, 0.6, 0.8) * base * vec2(0.7, 2.6) + vec2(t * 0.011, 0.0) + w * 1.6;
@@ -152,12 +153,15 @@ vec4 skyClouds(vec3 d, float t) {
   // Density is probed toward the light so each puff shades across its body instead of reading as a flat grey shape.
   vec2 uv3 = d.xz * (sqrt(d.y * d.y + 0.0404) - d.y) / 0.02 * 0.75 + vec2(t * 0.014, t * 0.006) + w * 0.5;
   float n3 = skyFbm(uv3 + 57.0);
-  float cov3 = mix(0.8, 0.52, uCloudCover) + (skyNoise(uv3 * 0.12 + 9.0) - 0.5) * 0.18;
-  n3 -= (skyNoise(uv3 * 7.0) - 0.5) * 0.06 * (1.0 - smoothstep(cov3, cov3 + 0.16, n3)); // frayed rims
-  float c3 = smoothstep(cov3, cov3 + 0.1, n3), th3 = smoothstep(cov3, cov3 + 0.3, n3);
+  float cov3 = mix(0.74, 0.5, uCloudCover) + (skyNoise(uv3 * 0.12 + 9.0) - 0.5) * 0.18;
+  // cauliflower rims: billowed (folded) noise bulges the edges into round heaps instead of a smeared outline
+  float bil = 1.0 - abs(2.0 * skyNoise(uv3 * 2.6 + 11.0) - 1.0);
+  n3 += (bil - 0.6) * 0.09 * (1.0 - smoothstep(cov3, cov3 + 0.2, n3));
+  n3 -= (skyNoise(uv3 * 7.0) - 0.5) * 0.04 * (1.0 - smoothstep(cov3, cov3 + 0.12, n3));
+  float c3 = smoothstep(cov3, cov3 + 0.05, n3), th3 = smoothstep(cov3, cov3 + 0.3, n3);
   float p3 = smoothstep(cov3, cov3 + 0.22, skyFbm3(uv3 + 57.0 + L.xz * 0.09));
-  float lit3 = exp(-2.2 * p3);
-  vec3 dc3 = ambC * (0.9 - 0.5 * th3) * 0.75 + sunC * lit3 * (0.6 + 0.5 * pow(sunAmt, 4.0)) * smoothstep(-0.06, 0.04, sy)
+  float lit3 = exp(-3.0 * p3);
+  vec3 dc3 = ambC * (0.92 - 0.6 * th3) * 0.72 + sunC * lit3 * (0.6 + 0.5 * pow(sunAmt, 4.0)) * smoothstep(-0.06, 0.04, sy)
     + sunC * c3 * (1.0 - th3) * pow(sunAmt, 10.0) * 1.4 * smoothstep(-0.06, 0.04, sy)
     + vec3(1.0, 0.38, 0.18) * underLit * (0.35 + 0.8 * pow(sunAmt, 2.0)) * (1.0 - 0.5 * th3);
   vec3 nc3 = vec3(0.01, 0.013, 0.02) + vec3(0.07, 0.08, 0.105) * mUp * lit3 * (0.3 + 0.7 * pow(mAng, 4.0))

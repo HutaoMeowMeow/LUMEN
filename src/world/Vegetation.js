@@ -14,6 +14,14 @@ const TAU = Math.PI * 2;
 const NV = createNoise(WORLD.seed + 5);
 const spire = ISLANDS.find((i) => i.id === 'spire');
 const TROPIC = ISLANDS.filter((i) => i.type === 'tropical' || i.type === 'atoll');
+// rainforest mask used by _land: > 0.02 closed jungle, > -0.1 its edge, below that open clearings
+const jungleJ = (x, z, h, slope) => NV.fbm2(x * 0.011 + 5, z * 0.011 - 9, 3) + 0.2 * smoothstep(4, 12, h) - 0.35 * smoothstep(38, 56, h) - slope * 0.6;
+// 0..1 closed-canopy cover where _land grows jungle; Terrain lays leaf litter under it and grass in the open
+export function canopyAt(x, z, h, slope) {
+  if (h < 4 || slope > 0.6 || Math.hypot(x - spire.x, z - spire.z) < spire.r * 1.2) return 0;
+  if (!TROPIC.some((I) => (x - I.x) ** 2 + (z - I.z) ** 2 < (I.r * 1.3) ** 2)) return 0;
+  return smoothstep(-0.1, 0.06, jungleJ(x, z, h, slope));
+}
 const CURRENT = 0.7 / TAU; // prevailing current heading as a rotation fraction; sea fans grow broadside to it
 
 // muted reef palettes; index i of each palette belongs to the same colour family so clusters stay coherent
@@ -80,9 +88,11 @@ const SURF = {
   anthurium: { ao: [0.5, 0.25], tl: 0.6, leaf: true },
   emergent: { cards: true, d: ['plant', 0.35, 0.03, 0.3], ao: [0.55, 2.2], tl: 0.5, leaf: true, vol: true },
   understory: { cards: true, d: ['plant', 0.6, 0.02, 0.3], ao: [0.5, 0.9], tl: 0.6, leaf: true, vol: true },
+  lantern: { cards: true, d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.2], tl: 0.6, leaf: true, vol: true },
 };
 
 // view: max draw distance (m). tilt: follow the ground normal. trunk: [height, radius] collider. lod: far geometry.
+// box: oriented box collider from the model's bounds, shrunk by this factor (uniformly scaled scans only).
 // surf: tall enough to be seen from above water at full range (other sea-floor types stop at SEABED_ABOVE).
 // lo: geo(true) builds a reduced-detail mesh, used everywhere on Low and as the far LOD otherwise (always 64 m+ away).
 // water/wind: [amplitude per metre of instance height, frequency, local sway height]
@@ -119,6 +129,7 @@ const TYPES = [
   { name: 'broadleaf2', geo: () => GEO.broadleafTree(48, false, GEO.SPREADING), lod: () => GEO.broadleafTree(48, true, GEO.SPREADING), pal: [0xffffff, 0xd0e0b0, 0xe8e8c0], wind: [0.04, 0.75, 7.0], side: 2, view: 900, trunk: [5, 0.42], land: true },
   // emergent rainforest giants over the canopy, and shade-tolerant small trees beneath it
   { name: 'emergent', geo: () => GEO.broadleafTree(61, false, GEO.EMERGENT), lod: () => GEO.broadleafTree(61, true, GEO.EMERGENT), pal: [0xffffff, 0xd8e0b8, 0xe8e8c8], wind: [0.025, 0.55, 14.0], side: 2, view: 1100, trunk: [9, 0.75], land: true },
+  { name: 'lantern', geo: () => GEO.broadleafTree(83, false, GEO.LANTERN), lod: () => GEO.broadleafTree(83, true, GEO.LANTERN), pal: [0xffffff, 0xe0e8c0, 0xf0e8d0], wind: [0.05, 0.8, 5.0], side: 2, view: 900, trunk: [4, 0.36], land: true, glow: 0.7 },
   { name: 'understory', geo: () => GEO.broadleafTree(71, false, GEO.UNDERSTORY), lod: () => GEO.broadleafTree(71, true, GEO.UNDERSTORY), pal: [0xffffff, 0xd0e8c0, 0xc0d8b0], wind: [0.05, 0.9, 3.0], side: 2, view: 500, trunk: [2, 0.2], land: true },
   { name: 'bigleaf', geo: () => GEO.bigLeafPlant(42), pal: [0xffffff, 0xd8f0b8, 0xc0d8a0], wind: [0.08, 1.4, 1.2], side: 2, view: 260, land: true },
   { name: 'shrub', geo: (lo) => GEO.floweringShrub(45, lo), lo: true, pal: [0xffffff, 0xe0f0d0], wind: [0.04, 1.2, 1.2], side: 2, view: 320, tilt: 0.5, land: true },
@@ -140,6 +151,13 @@ const TYPES = [
   { name: 'fernScan2', model: 'fern_02_c', pal: [0xffffff, 0xe8f0d0], wind: [0.07, 1.7, 0.7], side: 2, view: 130, tilt: 0.4, land: true },
   { name: 'anthurium', model: 'anthurium_botany_01_c', pal: [0xffffff, 0xe8f0d8], wind: [0.06, 1.4, 0.6], side: 2, view: 110, tilt: 0.3, land: true },
   { name: 'calathea', model: 'calathea_orbifolia_01', pal: [0xffffff, 0xe0f0d0, 0xf0f0d8], wind: [0.06, 1.3, 0.8], side: 2, view: 140, tilt: 0.3, land: true },
+  { name: 'mossrock', model: 'rock_moss_set_02_rock08', pal: [0xffffff, 0xe0e8d8, 0xd8d8d0], view: 320, tilt: 0.5, land: true, box: 0.75 },
+  { name: 'mossrock2', model: 'rock_moss_set_02_rock11', pal: [0xffffff, 0xe8e8e0], view: 320, tilt: 0.5, land: true, box: 0.75 },
+  { name: 'mossrock3', model: 'rock_moss_set_02_rock12', pal: [0xffffff, 0xe0e0d8], view: 320, tilt: 0.5, land: true, box: 0.75 },
+  { name: 'cliff', model: 'rock_face_01', pal: [0xffffff, 0xe8e0d4, 0xd8d4cc], view: 1100, land: true, box: 0.7 },
+  { name: 'cliff2', model: 'rock_face_02', pal: [0xffffff, 0xe0dcd4], view: 900, land: true, box: 0.7 },
+  { name: 'stump', model: 'tree_stump_01', pal: [0xffffff, 0xe0d8c8], view: 160, tilt: 0.6, land: true, box: 0.7 },
+  { name: 'log', model: 'dead_tree_trunk', pal: [0xffffff, 0xd8d0c0], view: 220, tilt: 0.9, land: true, box: 0.8 },
 ];
 const T = Object.fromEntries(TYPES.map((t, i) => [t.name, i]));
 const LONE = [T.brain, T.branch, T.soft, T.sponge, T.tube, T.anemone];
@@ -189,6 +207,7 @@ export class Vegetation {
     });
     this.dummy = new THREE.Object3D();
     this.tmpC = new THREE.Color();
+    this.tmpM = new THREE.Matrix4();
     this.tmpN = [0, 1, 0];
     this.tmpB = [0, 0, 0, 0];
   }
@@ -509,23 +528,33 @@ export class Vegetation {
     // beach band: tussocks of beach grass, shells, driftwood, the odd stone and crab
     if (h < 2.6) {
       const tuss = NV.fbm2(x * 0.05, z * 0.05 + 9, 2);
-      if (h > 1.5 && r < (tuss > 0 ? 0.08 + 0.12 * smoothstep(1.5, 2.6, h) : 0.01) * d) add(T.beachgrass, x, z, 0.7 + rnd() * 0.6);
-      else if (r > 0.95 && r < 0.95 + 0.012 * d) add(T.shell, x, z, 0.8 + rnd() * 0.6);
-      else if (r > 0.9 && r < 0.9 + 0.003 * d) add(T.conch, x, z, 0.8 + rnd() * 0.5);
-      else if (r > 0.92 && r < 0.92 + 0.002 * d) add(T.stone, x, z, 0.6 + rnd() * 0.8);
-      else if (r > 0.97 && r < 0.97 + 0.006 * d) add(T.rock, x, z, 0.3 + rnd() * 0.7);
-      else if (r > 0.98 && r < 0.98 + 0.0012 * d) add(T.driftwood, x, z, 0.8 + rnd() * 0.5);
+      // dune crest: tussocks thicken into a grassy fringe with the odd sprawling shrub where the beach meets the scrub
+      if (h > 1.3 && r < (tuss > -0.15 ? 0.1 + 0.25 * smoothstep(1.5, 2.6, h) : 0.015) * d) add(T.beachgrass, x, z, 0.8 + rnd() * 0.9);
+      else if (h > 2 && r > 0.6 && r < 0.6 + 0.02 * d * smoothstep(2, 2.6, h)) add(rnd() < 0.5 ? T.shrub : T.bush, x, z, 0.5 + rnd() * 0.4);
+      else if (h > 1.6 && r > 0.7 && r < 0.7 + 0.004 * d) add(rnd() < 0.5 ? T.palm : T.palmShort, x, z, 0.8 + rnd() * 0.5); // palms spill onto the upper beach
+      else if (r > 0.75 && r < 0.75 + 0.0015 * d) add(T.log, x, z, 0.6 + rnd() * 0.6, 3, -0.05); // pale storm-thrown trunks
+      else if (r > 0.8 && r < 0.8 + 0.003 * d) add([T.mossrock, T.mossrock2, T.mossrock3][Math.floor(rnd() * 3)], x, z, 0.5 + rnd() * 1.0, -1, -0.25);
+      else if (r > 0.95 && r < 0.95 + 0.02 * d) add(T.shell, x, z, 0.8 + rnd() * 0.6);
+      else if (r > 0.9 && r < 0.9 + 0.005 * d) add(T.conch, x, z, 0.8 + rnd() * 0.5);
+      else if (r > 0.92 && r < 0.92 + 0.006 * d) add(T.stone, x, z, 0.5 + rnd() * 0.9);
+      else if (r > 0.97 && r < 0.97 + 0.009 * d) add(T.rock, x, z, 0.3 + rnd() * 0.8);
+      else if (r > 0.98 && r < 0.98 + 0.003 * d) add(T.driftwood, x, z, 0.8 + rnd() * 0.5);
       else if (r > 0.99 && r < 0.99 + 0.002 * d) add(T.crab, x, z, 0.9 + rnd() * 0.4);
       return;
     }
-    if (slope > 0.42) { // steep ground: bare rock and ferns in the cracks
-      if (r < 0.05 * d) add(T.rock, x, z, 0.6 + rnd() * 1.8);
-      else if (r < 0.12 * d) add(T.fern, x, z, 0.6 + rnd() * 0.6);
+    if (slope > 0.42) { // steep ground: outcrops and mossy boulders, ferns and scrub clinging between them
+      if (r < 0.006 * d) { const s = 0.5 + rnd() * 0.7; add(rnd() < 0.6 ? T.cliff : T.cliff2, x, z, s, -1, -3.2 * s); } // a third buried: no gap on the downhill side
+      else if (r < 0.04 * d) add(T.rock, x, z, 0.6 + rnd() * 1.8);
+      else if (r < 0.06 * d) add([T.mossrock, T.mossrock2, T.mossrock3][Math.floor(rnd() * 3)], x, z, 0.6 + rnd() * 1.2, -1, -0.2);
+      else if (r < 0.16 * d) add(T.fern, x, z, 0.6 + rnd() * 0.6);
+      else if (r < 0.21 * d) add(T.bush, x, z, 0.5 + rnd() * 0.6);
+      else if (r < 0.36 * d) add(T.grass, x, z, 0.6 + rnd() * 0.5);
       else if (r > 0.9 && r < 0.9 + 0.03 * d) add(T.stone, x, z, 0.7 + rnd() * 1.0);
       return;
     }
-    if (h < 4) { // coastal scrub behind the beach, with a ragged fringe of palms
-      if (r < 0.012 * d) add(rnd() < 0.6 ? T.palm : T.palmShort, x, z, 0.85 + rnd() * 0.45);
+    if (h < 4) { // coastal scrub behind the beach, with a ragged fringe of palms; headlands break into rock outcrops
+      if (slope > 0.2 && r > 0.995 - 0.004 * d) { const s = 0.4 + rnd() * 0.6; add(rnd() < 0.5 ? T.cliff : T.cliff2, x, z, s, -1, -2.2 * s); }
+      else if (r < 0.02 * d) add(rnd() < 0.6 ? T.palm : T.palmShort, x, z, 0.85 + rnd() * 0.45);
       else if (r < 0.07 * d) add(T.beachgrass, x, z, 0.7 + rnd() * 0.6);
       else if (r < 0.085 * d) add(T.shrub, x, z, 0.6 + rnd() * 0.5);
       else if (r < 0.1 * d) add(T.bush, x, z, 0.6 + rnd() * 0.6);
@@ -534,30 +563,33 @@ export class Vegetation {
       return;
     }
     // inland: dense jungle where the mask is high, edges, and open clearings where it is low
-    const j = NV.fbm2(x * 0.011 + 5, z * 0.011 - 9, 3) + 0.2 * smoothstep(4, 12, h) - 0.35 * smoothstep(38, 56, h) - slope * 0.6;
+    const j = jungleJ(x, z, h, slope);
     const tree = () => (rnd() < 0.5 ? T.broadleaf : T.broadleaf2);
     if (j > 0.02) { // wide enough that the island reads as closed rainforest from the sea, not savannah
       // canopy density is what makes it read as jungle; thin the understory instead. Both are modulated (mean ~1)
       // so trees gather in groves around light gaps and the undergrowth comes in thickets rather than an even carpet
       const dj = (0.5 + 0.5 * d) * (0.55 + 0.9 * smoothstep(-0.35, 0.35, NV.fbm2(x * 0.03 + 17, z * 0.03 - 5, 2)));
       const u = d * (0.45 + 1.1 * smoothstep(-0.3, 0.4, NV.fbm2(x * 0.07 - 21, z * 0.07 + 4, 2)));
-      if (r < 0.1 * dj) add(dj > 1.05 && rnd() < 0.12 ? T.emergent : tree(), x, z, 0.75 + rnd() * 0.75);
+      if (r < 0.1 * dj) add(dj > 1.05 && rnd() < 0.12 ? T.emergent : dj < 0.8 && rnd() < 0.3 ? T.lantern : tree(), x, z, 0.75 + rnd() * 0.75); // lanterns crowd the light gaps
       else if (r < 0.115 * dj) add(T.palm, x, z, 0.95 + rnd() * 0.45);
-      else if (r < 0.115 * dj + 0.06 * u) add(T.understory, x, z, 0.7 + rnd() * 0.7);
-      else if (r < 0.115 * dj + 0.11 * u) add(T.bigleaf, x, z, 0.8 + rnd() * 0.8);
-      else if (r < 0.115 * dj + 0.23 * u) add(T.fern, x, z, 0.8 + rnd() * 0.8);
-      else if (r < 0.115 * dj + 0.3 * u) add(T.bush, x, z, 0.7 + rnd() * 0.7);
-      else if (r < 0.115 * dj + 0.36 * u) add(T.grass, x, z, 0.7 + rnd() * 0.6);
+      else if (r < 0.115 * dj + 0.08 * u) add(T.understory, x, z, 0.7 + rnd() * 0.7);
+      else if (r < 0.115 * dj + 0.15 * u) add(T.bigleaf, x, z, 0.8 + rnd() * 0.8);
+      else if (r < 0.115 * dj + 0.32 * u) add(T.fern, x, z, 0.8 + rnd() * 0.8);
+      else if (r < 0.115 * dj + 0.42 * u) add(T.bush, x, z, 0.7 + rnd() * 0.7);
+      else if (r < 0.115 * dj + 0.5 * u) add(T.grass, x, z, 0.7 + rnd() * 0.6); // thickets may crowd out the rarer props above 0.9
       else if (r > 0.9 && r < 0.9 + 0.015 * u) add(T.calathea, x, z, 0.8 + rnd() * 0.5); // u <= ~1.9: stays below 0.93
       else if (r > 0.93 && r < 0.93 + 0.012 * u) add(rnd() < 0.5 ? T.fernScan : T.fernScan2, x, z, 0.8 + rnd() * 0.5); // < 0.953
       else if (r > 0.955 && r < 0.955 + 0.004 * u) add(T.anthurium, x, z, 0.8 + rnd() * 0.4); // < 0.963
       else if (r > 0.964 && r < 0.964 + 0.003 * dj) add(rnd() < 0.6 ? T.pachira : T.pachira2, x, z, 0.8 + rnd() * 0.5); // dj <= ~1.45
-      else if (r > 0.97 && r < 0.97 + 0.006 * d) add(T.branches, x, z, 0.8 + rnd() * 0.5);
+      else if (r > 0.97 && r < 0.97 + 0.006 * d) add(T.branches, x, z, 0.8 + rnd() * 0.5); // < 0.978
+      else if (r > 0.979 && r < 0.979 + 0.004 * d) add([T.mossrock, T.mossrock2, T.mossrock3][Math.floor(rnd() * 3)], x, z, 0.5 + rnd() * 1.1, -1, -0.15); // < 0.984
+      else if (r > 0.985 && r < 0.985 + 0.0016 * d) add(T.log, x, z, 0.8 + rnd() * 0.5, -1, -0.05); // < 0.987
+      else if (r > 0.988 && r < 0.988 + 0.0016 * d) add(T.stump, x, z, 0.8 + rnd() * 0.6, -1, -0.1);
     } else if (j > -0.1) {
-      if (r < 0.016 * d) add(tree(), x, z, 0.7 + rnd() * 0.6);
-      else if (r < 0.009 * d) add(T.palmShort, x, z, 0.8 + rnd() * 0.4);
-      else if (r < 0.014 * d) add(T.understory, x, z, 0.7 + rnd() * 0.6);
-      else if (r < 0.03 * d) add(T.shrub, x, z, 0.6 + rnd() * 0.6);
+      if (r < 0.016 * d) add(rnd() < 0.35 ? T.lantern : tree(), x, z, 0.7 + rnd() * 0.6);
+      else if (r < 0.02 * d) add(T.palmShort, x, z, 0.8 + rnd() * 0.4); // thresholds were below the tree's, so these never grew
+      else if (r < 0.027 * d) add(T.understory, x, z, 0.7 + rnd() * 0.6);
+      else if (r < 0.038 * d) add(T.shrub, x, z, 0.6 + rnd() * 0.6);
       else if (r < 0.06 * d) add(T.bush, x, z, 0.6 + rnd() * 0.7);
       else if (r < 0.12 * d) add(T.fern, x, z, 0.6 + rnd() * 0.6);
       else if (r < 0.14 * d) add(T.bigleaf, x, z, 0.6 + rnd() * 0.6);
@@ -567,12 +599,13 @@ export class Vegetation {
       else if (r > 0.98 && r < 0.98 + 0.004 * d) add(rnd() < 0.5 ? T.pachira : T.fernScan, x, z, 0.8 + rnd() * 0.5);
     } else {
       const fl = NV.fbm2(x * 0.04 - 3, z * 0.04 + 11, 2); // flower drifts across clearings
-      if (r < 0.0015 * d) add(tree(), x, z, 1.0 + rnd() * 0.5);
+      if (r < 0.0015 * d) add(rnd() < 0.5 ? T.lantern : tree(), x, z, 1.0 + rnd() * 0.5); // lone lantern trees stand out in clearings
       else if (r < 0.003 * d) add(T.palmShort, x, z, 0.8 + rnd() * 0.4);
       else if (r < 0.01 * d) add(T.bush, x, z, 0.6 + rnd() * 0.6);
       else if (r < 0.014 * d && slope > 0.15) add(T.rock, x, z, 0.5 + rnd() * 1.2);
       else if (r < (0.02 + (fl > 0.15 ? 0.14 : 0)) * d) add(T.flowers, x, z, 0.7 + rnd() * 0.6);
       else if (r < 0.5 * d) add(T.grass, x, z, 0.7 + rnd() * 0.7);
+      else if (r > 0.97 && r < 0.97 + 0.005 * d) add([T.mossrock, T.mossrock2, T.mossrock3][Math.floor(rnd() * 3)], x, z, 0.7 + rnd() * 1.3, -1, -0.25); // half-buried boulders break up open turf
     }
   }
 
@@ -626,6 +659,11 @@ export class Vegetation {
         if (this.colliders) {
           if (t.collide === 'sphere' && s > 0.9) colliderIds.push(this.colliders.addSphere(x, h + s * 0.15, z, s * 0.42));
           else if (t.trunk) colliderIds.push(this.colliders.addCapsule(x, h - 1, z, x, h + t.trunk[0] * s, z, t.trunk[1] * s));
+          else if (t.box) {
+            const b = t.geo.boundingBox, k = t.box / 2;
+            this.tmpM.makeTranslation(0, (b.max.y + b.min.y) / 2, 0).premultiply(dm.matrix);
+            colliderIds.push(this.colliders.addBox(this.tmpM, (b.max.x - b.min.x) * k, (b.max.y - b.min.y) * k, (b.max.z - b.min.z) * k));
+          }
         }
       }
       im.instanceMatrix.needsUpdate = true;

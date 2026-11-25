@@ -11,6 +11,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 const LIST = {
   lambis_shell: 1.6, rock_09: 8, dry_branches_medium_01: 1.2, calathea_orbifolia_01: 1.8,
   pachira_aquatica_01: [3.2, ['c', 'd']], fern_02: [2.2, ['b', 'c']], anthurium_botany_01: [2, ['c']],
+  rock_moss_set_02: [2.2, ['rock08', 'rock11', 'rock12']], rock_face_01: 3, rock_face_02: 3, tree_stump_01: 1.3, dead_tree_trunk: 2.2,
 };
 
 export const MODELS = {};

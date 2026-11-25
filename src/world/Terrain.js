@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { WORLD } from './layout.js';
 import { stdMat, U } from '../fx/materials.js';
 import { getNoiseTexture } from '../fx/textures.js';
+import { canopyAt } from './Vegetation.js';
 
 const CHUNK = 256;
 const CELLS = CHUNK / WORLD.cell; // 128 grid cells per chunk
@@ -14,6 +15,7 @@ export const TERRAIN_DECL = /* glsl */ `
 uniform sampler2D uNoise, uBiome;
 uniform float uWorldHalf;
 varying vec3 vWNormal;
+float tCanopy = 0.0; // closed-canopy cover; the terrain material sets it from a vertex attribute, cave rock leaves 0
 // triplanar sample: cliffs get undistorted rock instead of the top-down projection smeared down their faces
 vec4 terrainTri(vec3 P, vec3 Nw, float s) {
   vec3 w = pow(abs(Nw) + 1e-3, vec3(4.0));
@@ -36,7 +38,7 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   float y = P.y;
   float crack;
   float rh = terrainRockH(P, Nw, crack);
-  vec3 sand = mix(vec3(0.8, 0.67, 0.47), vec3(0.95, 0.86, 0.66), n1) * (0.88 + 0.24 * n2);
+  vec3 sand = mix(vec3(0.72, 0.57, 0.37), vec3(0.88, 0.74, 0.5), n1) * (0.88 + 0.24 * n2); // warm cream, not white under the noon sun
   sand = mix(sand, sand * vec3(1.04, 0.93, 0.86), smoothstep(0.55, 0.8, n3)); // broad warm/pale drifts
   vec3 silt = mix(vec3(0.46, 0.45, 0.38), vec3(0.6, 0.56, 0.45), n1);
   vec3 rock = mix(vec3(0.3, 0.285, 0.265), vec3(0.55, 0.5, 0.43), rh) * (0.9 + 0.2 * n2);
@@ -46,7 +48,7 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   float moss = smoothstep(0.45, 0.8, Nw.y + 0.35 * (n1 - 0.5)) * smoothstep(1.5, 4.0, y) * (1.0 - bio.a);
   rock = mix(rock, mix(vec3(0.16, 0.25, 0.09), vec3(0.42, 0.44, 0.3), n2) * (0.8 + 0.3 * rh), moss * 0.7);
   vec3 grass = mix(vec3(0.16, 0.31, 0.09), vec3(0.3, 0.44, 0.14), n1) * (0.8 + 0.35 * n2);
-  grass = mix(grass, vec3(0.46, 0.43, 0.2) * (0.85 + 0.3 * n1), smoothstep(0.45, 0.75, n3) * 0.55); // dry patches
+  grass = mix(grass, vec3(0.46, 0.43, 0.2) * (0.85 + 0.3 * n1), smoothstep(0.55, 0.8, n3) * 0.3); // dry patches
   vec3 dirt = vec3(0.36, 0.29, 0.2) * (0.8 + 0.3 * n2);
   vec3 ash = mix(vec3(0.09, 0.085, 0.085), vec3(0.2, 0.17, 0.16), n2);
   vec3 ooze = mix(vec3(0.07, 0.08, 0.11), vec3(0.14, 0.14, 0.18), n1);
@@ -85,18 +87,19 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     floorC = mix(floorC, vec3(0.25, 0.19, 0.13), twig * 0.7);
     float pebble = smoothstep(0.83, 0.9, texture2D(uNoise, P.xz * 1.1 + 0.37).r) * fine;
     floorC = mix(floorC, vec3(0.42, 0.4, 0.37) * (0.8 + 0.4 * fA.g), pebble * 0.8);
-    float litter = smoothstep(0.3, 0.6, fB.b + 0.35 * (n1 - 0.5)) * smoothstep(3.5, 7.0, y);
+    // litter lies under the trees (tCanopy); in the open only the odd bare scuff breaks the turf
+    float litter = max(tCanopy * (0.7 + 0.3 * smoothstep(0.3, 0.6, fB.b)), smoothstep(0.62, 0.85, fB.b + 0.35 * (n1 - 0.5)) * 0.45) * smoothstep(3.5, 7.0, y);
     grass *= mix(vec3(1.0), vec3(1.12, 1.05, 0.8), smoothstep(0.55, 0.85, fB.r)); // sun-bleached swathes
     grass *= 1.0 + (fA.g - 0.5) * 0.2 * fine;
     float beach = 1.0 - smoothstep(1.6, 3.2 + 1.5 * n1, y + 0.9 * (fB.g - 0.5));
-    col = mix(grass, dirt, smoothstep(0.55, 0.8, n3) * 0.6);
+    col = mix(grass, dirt, smoothstep(0.62, 0.85, n3) * 0.3);
     col = mix(col, floorC, litter * 0.85);
     rough = mix(0.88, 0.8, litter);
     col = mix(col, mix(sand, dirt, 0.45) * 0.92, beach * (1.0 - beach) * 2.4); // sandy soil between beach and turf
     col = mix(col, sand, smoothstep(0.25, 0.75, beach));
     rough = mix(rough, sandRough, smoothstep(0.25, 0.75, beach));
     // rock: quartz veins and lichen, darker where it meets the soil so it sits in the ground
-    float rb = smoothstep(0.32, 0.5, slope + 0.1 * n2);
+    float rb = smoothstep(0.36, 0.54, slope + 0.1 * n2); // vegetation holds all but the steepest ground
     vec4 rt = terrainTri(P, Nw, 0.6);
     rock = mix(rock, vec3(0.7, 0.67, 0.6), smoothstep(0.95, 0.99, terrainTri(P, Nw, 0.07).a) * 0.45);
     rock = mix(rock, mix(vec3(0.62, 0.6, 0.5), vec3(0.62, 0.45, 0.22), rt.b), smoothstep(0.78, 0.9, rt.r) * smoothstep(0.3, 0.7, Nw.y + 0.3) * 0.35 * fine);
@@ -124,11 +127,12 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
 }
 `;
 
-const VERT_DECL = /* glsl */ `varying vec3 vWNormal;`;
-const VERT_MAIN = /* glsl */ `vWNormal = normalize(mat3(modelMatrix) * objectNormal);`;
+const VERT_DECL = /* glsl */ `varying vec3 vWNormal; attribute float aCanopy; varying float vCanopy;`;
+const VERT_MAIN = /* glsl */ `vWNormal = normalize(mat3(modelMatrix) * objectNormal); vCanopy = aCanopy;`;
 
 const FRAG_COLOR = /* glsl */ `
 float tRough;
+tCanopy = vCanopy;
 diffuseColor.rgb *= terrainAlbedo(vWPos, normalize(vWNormal), tRough);
 `;
 // small-scale ripples and grit via noise gradient (cheap bump)
@@ -179,7 +183,7 @@ export function makeTerrainMaterial(uniforms, key = 'terrain', extra = {}) {
   return stdMat({ color: 0xffffff, roughness: 0.95, metalness: 0 }, {
     key, uniforms,
     vertDecl: VERT_DECL, vertMain: VERT_MAIN,
-    fragDecl: TERRAIN_DECL + (extra.fragDecl || ''),
+    fragDecl: TERRAIN_DECL + 'varying float vCanopy;' + (extra.fragDecl || ''),
     fragColor: FRAG_COLOR + (extra.fragColor || ''),
     fragNormal: FRAG_NORMAL,
     fragEmissive: extra.fragEmissive || '',
@@ -244,7 +248,7 @@ export class Terrain {
     const { n, perimeter, attr } = this.indices[lod];
     const W = this.world;
     const cnt = n * n + perimeter.length;
-    const pos = new Float32Array(cnt * 3), nrm = new Float32Array(cnt * 3);
+    const pos = new Float32Array(cnt * 3), nrm = new Float32Array(cnt * 3), can = new Float32Array(cnt);
     const gx0 = ch.cx * CELLS, gz0 = ch.cz * CELLS, cell = WORLD.cell;
     let k = 0;
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++, k++) {
@@ -255,16 +259,18 @@ export class Terrain {
       const dx = W.hAt(gi + 1, gj) - W.hAt(gi - 1, gj), dz = W.hAt(gi, gj + 1) - W.hAt(gi, gj - 1);
       const l = Math.hypot(dx, 2 * cell, dz);
       nrm[k * 3] = -dx / l; nrm[k * 3 + 1] = (2 * cell) / l; nrm[k * 3 + 2] = -dz / l;
+      can[k] = canopyAt(pos[k * 3], pos[k * 3 + 2], pos[k * 3 + 1], 1 - nrm[k * 3 + 1]);
     }
     const drop = 2 + s * 3;
     for (const p of perimeter) {
       pos[k * 3] = pos[p * 3]; pos[k * 3 + 1] = pos[p * 3 + 1] - drop; pos[k * 3 + 2] = pos[p * 3 + 2];
-      nrm[k * 3] = nrm[p * 3]; nrm[k * 3 + 1] = nrm[p * 3 + 1]; nrm[k * 3 + 2] = nrm[p * 3 + 2];
+      nrm[k * 3] = nrm[p * 3]; nrm[k * 3 + 1] = nrm[p * 3 + 1]; nrm[k * 3 + 2] = nrm[p * 3 + 2]; can[k] = can[p];
       k++;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    g.setAttribute('aCanopy', new THREE.BufferAttribute(can, 1));
     g.setIndex(attr);
     g.boundingBox = new THREE.Box3(new THREE.Vector3(ch.cxw - CHUNK / 2, ch.hmin - drop, ch.czw - CHUNK / 2), new THREE.Vector3(ch.cxw + CHUNK / 2, ch.hmax, ch.czw + CHUNK / 2));
     g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());

@@ -871,19 +871,23 @@ export const UNDERSTORY = { H0: 2.4, Hr: 1.0, from: 0.4, limbs: 6, len0: 1.2, le
 // low-branching, wide spreading crown (fig-like): fills the bare-trunk band so groves read as a closed canopy
 export const SPREADING = { H0: 4.6, Hr: 1.4, from: 0.36, limbs: 7, len0: 2.7, lenR: 1.2, rise0: 0.3, riseR: 0.3, crown: 1.15, sq0: 0.55, tile: 0, girth: 1.15, vines: 6, leaf: [0x24481a, 0x7cae46] };
 
+// lantern tree (original species): corkscrew trunk, low open crown, glowing orange seed pods hanging on long stalks
+export const LANTERN = { H0: 5.2, Hr: 1.6, from: 0.45, limbs: 6, len0: 2.8, lenR: 1.2, rise0: 0.25, riseR: 0.25, crown: 0.9, sq0: 0.48, tile: 0, girth: 0.95, vines: 3, leaf: [0x2e4c1c, 0x94ac4a], twist: 1, lanterns: 22 };
+
 export function broadleafTree(seed = 41, lod = false, sp = {}) {
-  const { H0 = 5, Hr = 1.5, from = 0.58, limbs = 5, len0 = 2.0, lenR = 1.1, rise0 = 0.45, riseR = 0.35, crown = 1, sq0 = 0.65, tile = 0, girth = 1, vines = 7, leaf = [0x2a521a, 0x8ab84c] } = sp;
+  const { H0 = 5, Hr = 1.5, from = 0.58, limbs = 5, len0 = 2.0, lenR = 1.1, rise0 = 0.45, riseR = 0.35, crown = 1, sq0 = 0.65, tile = 0, girth = 1, vines = 7, leaf = [0x2a521a, 0x8ab84c], twist = 0, lanterns = 0 } = sp;
   const rnd = mulberry32(seed), lrnd = mulberry32(seed * 7 + 1); // leaves draw from their own stream so LOD and full crowns match
   const parts = [];
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const BARK0 = 0x3a3026, BARK1 = 0x6e6250;
+  const BARK0 = 0x544638, BARK1 = 0x867862; // weathered grey-brown: the darker bark crushed to black in canopy shade
   const H = H0 + rnd() * Hr;
   // trunk: gentle S-curved lean, taper, four buttress lobes at the foot, furrowed bark and a few knots
   const lean = rnd() * Math.PI * 2, bend = (0.25 + rnd() * 0.3) * Math.sqrt(H / 6), ph = rnd() * 6, lobePh = rnd() * 6;
   const tpts = [];
   for (let i = 0; i <= 6; i++) {
-    const t = i / 6, off = bend * t * t + 0.12 * Math.sin(t * 3.5 + ph) * t * Math.sqrt(H / 6);
-    tpts.push(V(Math.cos(lean) * off, -0.5 + (H + 0.5) * t, Math.sin(lean) * off));
+    const t = i / 6, off = bend * t * t + (0.12 + 0.3 * twist) * Math.sin(t * (3.5 + 3 * twist) + ph) * t * Math.sqrt(H / 6);
+    const tw = twist * 0.35 * Math.sin(t * 7 + ph) * t; // corkscrew: a second sway across the lean
+    tpts.push(V(Math.cos(lean) * off - Math.sin(lean) * tw, -0.5 + (H + 0.5) * t, Math.sin(lean) * off + Math.cos(lean) * tw));
   }
   const tc = new THREE.CatmullRomCurve3(tpts);
   const knots = [0, 1, 2].map(() => [0.25 + rnd() * 0.55, rnd() * Math.PI * 2]);
@@ -948,6 +952,21 @@ export function broadleafTree(seed = 41, lod = false, sp = {}) {
     g.rotateY(rnd() * Math.PI);
     g.translate(t.x, 0, t.z);
     parts.push(paint(g, 0x2a4418, 0x3a5a20));
+  }
+  // lantern pods: own random stream, so full and LOD trees hang the same fruit
+  const frnd = mulberry32(seed * 13 + 5);
+  for (let i = 0; i < lanterns; i++) {
+    const t = tips[i % tips.length], a = frnd() * Math.PI * 2, rr = (0.3 + frnd() * 0.9) * crown;
+    const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr, y = t.y - 0.1, len = 0.5 + frnd() * 1.1, pr = 0.13 + frnd() * 0.07;
+    if (!lod) {
+      const st = new THREE.CylinderGeometry(0.01, 0.014, len, 3);
+      st.translate(x, y - len / 2, z);
+      parts.push(paint(st, 0x3a3a1c, 0x4e4a24));
+    }
+    const pod = new THREE.SphereGeometry(pr, lod ? 5 : 9, lod ? 4 : 7);
+    pod.scale(1, 1.5, 1);
+    pod.translate(x, y - len - pr * 1.3, z);
+    parts.push(paint(pod, 0xb8401a, 0xffa848, 1));
   }
   return merged(parts);
 }

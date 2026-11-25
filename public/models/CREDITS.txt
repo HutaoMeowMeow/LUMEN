@@ -8,5 +8,10 @@ calathea_orbifolia_01   https://polyhaven.com/a/calathea_orbifolia_01
 pachira_aquatica_01     https://polyhaven.com/a/pachira_aquatica_01   (variants c, d used as small trees)
 fern_02                 https://polyhaven.com/a/fern_02               (variants b, c)
 anthurium_botany_01     https://polyhaven.com/a/anthurium_botany_01   (variant c)
+rock_moss_set_02        https://polyhaven.com/a/rock_moss_set_02      (variants rock08, rock11, rock12)
+rock_face_01            https://polyhaven.com/a/rock_face_01
+rock_face_02            https://polyhaven.com/a/rock_face_02
+tree_stump_01           https://polyhaven.com/a/tree_stump_01
+dead_tree_trunk         https://polyhaven.com/a/dead_tree_trunk
 
 Multi-plant files are split by node-name suffix at load time; the files themselves are unmodified.
