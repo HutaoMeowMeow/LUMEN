@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LUMEN — Ocean Exploration</title>
+  <meta name="description" content="LUMEN: an open-world ocean exploration game in the browser. Dive reefs, kelp forests, caves and the glowing Hollow Rift." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./src/ui/styles.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <section id="loading" class="screen show">
+    <h1 class="logo">LUMEN</h1>
+    <p class="tag">an ocean of light</p>
+    <div class="bar"><div id="load-fill"></div></div>
+    <p id="load-label">Preparing the sea</p>
+  </section>
+
+  <section id="menu" class="screen">
+    <h1 class="logo">LUMEN</h1>
+    <p class="tag">an ocean of light</p>
+    <nav class="buttons">
+      <button id="btn-continue" hidden>Continue dive</button>
+      <button id="btn-new">New dive</button>
+      <button id="btn-settings">Settings</button>
+      <button id="btn-controls">Controls</button>
+    </nav>
+    <p class="foot">Headphones recommended · All visuals and sound are generated in your browser</p>
+  </section>
+
+  <section id="intro" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>The last transmission</h2>
+      <p id="intro-text"></p>
+      <p class="muted">Find what Meridian Station found. Explore, examine places with <kbd>E</kbd>, and fill your journal.</p>
+      <button id="btn-begin" class="primary">Dive in</button>
+    </div>
+  </section>
+
+  <section id="controls" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>Controls</h2>
+      <table class="keys">
+        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Swim / walk</td></tr>
+        <tr><td>Mouse</td><td>Look (click the screen to capture the mouse; or drag to look)</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Swim up / jump</td></tr>
+        <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Swim down</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>Sprint (uses more oxygen)</td></tr>
+        <tr><td><kbd>E</kbd></td><td>Examine</td></tr>
+        <tr><td><kbd>F</kbd></td><td>Lamp on / off</td></tr>
+        <tr><td><kbd>J</kbd></td><td>Journal</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Map</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Pause</td></tr>
+      </table>
+      <p class="muted">Your oxygen lasts about 90 seconds. Surface, or find air pockets, before it runs out.</p>
+      <button class="back">Back</button>
+    </div>
+  </section>
+
+  <section id="hud" class="screen">
+    <div id="compass"><div id="compass-strip"></div><div class="tick"></div></div>
+    <div id="depth"><span id="depth-val">0</span><small id="depth-unit">m</small><div id="depth-label">Surface</div></div>
+    <div id="o2"><div class="o2-label">O₂</div><div class="o2-bar"><div id="o2-fill"></div></div><div id="o2-val">90s</div></div>
+    <div id="lamp" title="Lamp (F)">LAMP</div>
+    <div id="prompt"></div>
+    <div id="crosshair"></div>
+    <div id="toasts"></div>
+    <div id="hint"></div>
+    <div id="fps"></div>
+    <div id="bounds">Strong currents ahead: turn back toward the islands</div>
+  </section>
+
+  <section id="pause" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>Paused</h2>
+      <p id="pause-stats" class="muted"></p>
+      <nav class="buttons">
+        <button id="btn-resume" class="primary">Resume</button>
+        <button id="btn-journal">Journal</button>
+        <button id="btn-map">Map</button>
+        <button id="btn-psettings">Settings</button>
+        <button id="btn-quit">Save &amp; return to menu</button>
+      </nav>
+    </div>
+  </section>
+
+  <section id="journal" class="screen panel-screen">
+    <div class="panel wide">
+      <header><h2>Journal</h2><span id="journal-count" class="muted"></span></header>
+      <div class="tabs" id="journal-tabs"></div>
+      <div class="journal-body">
+        <ul id="journal-list"></ul>
+        <article id="journal-entry"></article>
+      </div>
+      <button class="back">Back</button>
+    </div>
+  </section>
+
+  <section id="map" class="screen panel-screen">
+    <div class="panel wide">
+      <header><h2>Chart</h2><span class="muted">North is up</span></header>
+      <canvas id="map-canvas" width="720" height="720"></canvas>
+      <button class="back">Back</button>
+    </div>
+  </section>
+
+  <section id="settings" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>Settings</h2>
+      <form id="settings-form" onsubmit="return false">
+        <label>Graphics quality
+          <select name="quality">
+            <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="ultra">Ultra</option>
+          </select>
+        </label>
+        <p id="quality-note" class="muted" hidden>Quality changes apply after a reload. <button type="button" id="btn-reload">Reload now</button></p>
+        <label>Mouse sensitivity <input type="range" name="sensitivity" min="0.2" max="3" step="0.05" /></label>
+        <label class="check"><input type="checkbox" name="invertY" /> Invert mouse Y</label>
+        <label>Field of view <input type="range" name="fov" min="60" max="100" step="1" /></label>
+        <label>Master volume <input type="range" name="master" min="0" max="1" step="0.01" /></label>
+        <label>Ambience <input type="range" name="ambience" min="0" max="1" step="0.01" /></label>
+        <label>Effects <input type="range" name="effects" min="0" max="1" step="0.01" /></label>
+        <label>Music <input type="range" name="music" min="0" max="1" step="0.01" /></label>
+        <label class="check"><input type="checkbox" name="showFps" /> Show frame rate</label>
+      </form>
+      <button class="back">Back</button>
+    </div>
+  </section>
+
+  <section id="ending" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>Follow the light down</h2>
+      <p id="ending-text"></p>
+      <button id="btn-ending" class="primary">Keep exploring</button>
+    </div>
+  </section>
+
+  <section id="error" class="screen panel-screen">
+    <div class="panel narrow">
+      <h2>LUMEN could not start</h2>
+      <p id="error-text"></p>
+      <p class="muted">LUMEN needs a browser with WebGL 2 (a current Chrome, Edge, Firefox or Safari).</p>
+    </div>
+  </section>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
