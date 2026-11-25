@@ -14,18 +14,37 @@ export const TERRAIN_DECL = /* glsl */ `
 uniform sampler2D uNoise, uBiome;
 uniform float uWorldHalf;
 varying vec3 vWNormal;
+// triplanar sample: cliffs get undistorted rock instead of the top-down projection smeared down their faces
+vec4 terrainTri(vec3 P, vec3 Nw, float s) {
+  vec3 w = pow(abs(Nw) + 1e-3, vec3(4.0));
+  w /= w.x + w.y + w.z;
+  return texture2D(uNoise, P.zy * s) * w.x + texture2D(uNoise, P.xz * s) * w.y + texture2D(uNoise, P.xy * s) * w.z;
+}
+// rock relief 0..1: grain, bedding strata and fractures
+float terrainRockH(vec3 P, vec3 Nw, out float crack) {
+  vec4 a = terrainTri(P, Nw, 0.045), b = terrainTri(P, Nw, 0.19);
+  float strata = 0.5 + 0.5 * sin(P.y * 1.6 + a.b * 7.0 + a.r * 2.0);
+  crack = smoothstep(0.86, 0.97, b.a) * (0.5 + 0.5 * a.g);
+  return clamp(0.25 + 0.35 * a.r + 0.25 * b.g + 0.2 * strata - crack * 0.6, 0.0, 1.0);
+}
 vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   vec4 bio = texture2D(uBiome, (P.xz + uWorldHalf) / (2.0 * uWorldHalf));
   float n1 = texture2D(uNoise, P.xz * 0.043).r;
   float n2 = texture2D(uNoise, P.xz * 0.21).g;
   float n3 = texture2D(uNoise, P.xz * 0.0061).b;
-  float nv = texture2D(uNoise, vec2(P.x + P.z, P.y) * 0.05).r; // vertical strata for cliffs
   float slope = 1.0 - Nw.y;
   float y = P.y;
+  float crack;
+  float rh = terrainRockH(P, Nw, crack);
   vec3 sand = mix(vec3(0.8, 0.67, 0.47), vec3(0.95, 0.86, 0.66), n1) * (0.88 + 0.24 * n2);
   sand = mix(sand, sand * vec3(1.04, 0.93, 0.86), smoothstep(0.55, 0.8, n3)); // broad warm/pale drifts
   vec3 silt = mix(vec3(0.46, 0.45, 0.38), vec3(0.6, 0.56, 0.45), n1);
-  vec3 rock = mix(vec3(0.33, 0.31, 0.29), vec3(0.52, 0.48, 0.42), n2) * (0.8 + 0.35 * nv);
+  vec3 rock = mix(vec3(0.3, 0.285, 0.265), vec3(0.55, 0.5, 0.43), rh) * (0.9 + 0.2 * n2);
+  rock = mix(rock, rock * vec3(1.08, 0.95, 0.82), smoothstep(0.4, 0.8, n3) * 0.6); // iron staining
+  rock *= 1.0 - crack * 0.45;
+  // moss and lichen on ledges and the upper faces of dry rock
+  float moss = smoothstep(0.45, 0.8, Nw.y + 0.35 * (n1 - 0.5)) * smoothstep(1.5, 4.0, y) * (1.0 - bio.a);
+  rock = mix(rock, mix(vec3(0.16, 0.25, 0.09), vec3(0.42, 0.44, 0.3), n2) * (0.8 + 0.3 * rh), moss * 0.7);
   vec3 grass = mix(vec3(0.16, 0.31, 0.09), vec3(0.3, 0.44, 0.14), n1) * (0.8 + 0.35 * n2);
   grass = mix(grass, vec3(0.46, 0.43, 0.2) * (0.85 + 0.3 * n1), smoothstep(0.45, 0.75, n3) * 0.55); // dry patches
   vec3 dirt = vec3(0.36, 0.29, 0.2) * (0.8 + 0.3 * n2);
@@ -79,6 +98,16 @@ const FRAG_NORMAL = /* glsl */ `
   vec3 bv = normalize((viewMatrix * vec4(bw, 0.0)).xyz);
   vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
   normal = normalize(normal + (bv - up) * fade * normalize(vWNormal).y);
+  // cliff relief: derivative bump from the triplanar rock height, on slopes only
+  vec3 nw = normalize(vWNormal);
+  float cr;
+  float rh = terrainRockH(vWPos, nw, cr);
+  float bf = 0.35 * smoothstep(0.22, 0.45, 1.0 - nw.y) * (1.0 - smoothstep(30.0, 90.0, length(vViewPosition)));
+  vec2 dH = vec2(dFdx(rh), dFdy(rh)) * bf;
+  vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+  vec3 R1 = cross(sy, normal), R2 = cross(normal, sx);
+  float det = dot(sx, R1) * faceDirection;
+  if (abs(det) > 1e-12) normal = normalize(abs(det) * normal - sign(det) * (dH.x * R1 + dH.y * R2));
 }
 `;
 

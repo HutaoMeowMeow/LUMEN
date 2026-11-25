@@ -105,7 +105,9 @@ void main() {
   float detailFade = 1.0 - smoothstep(80.0, 700.0, dist);
   vec3 n1 = texture2D(uNormalTex, vWPos.xz * 0.045 + vec2(uTime * 0.012, uTime * 0.007)).xzy * 2.0 - 1.0;
   vec3 n2 = texture2D(uNormalTex, vWPos.xz * 0.11 - vec2(uTime * 0.017, -uTime * 0.011)).xzy * 2.0 - 1.0;
-  vec3 N = normalize(vNrm + (vec3(n1.x + n2.x, 0.0, n1.z + n2.z)) * 0.32 * detailFade);
+  vec3 n3 = texture2D(uNormalTex, vWPos.xz * 0.29 + vec2(uTime * 0.031, uTime * 0.023)).xzy * 2.0 - 1.0;
+  float fineFade = 1.0 - smoothstep(15.0, 160.0, dist); // capillary ripples only up close
+  vec3 N = normalize(vNrm + (vec3(n1.x + n2.x, 0.0, n1.z + n2.z) * 0.32 + vec3(n3.x, 0.0, n3.z) * 0.14 * fineFade) * detailFade);
   vec3 V = normalize(cameraPosition - vWPos);
   vec3 col;
   float alpha = 1.0;
@@ -117,8 +119,10 @@ void main() {
     vec3 refl = skyBase(R);
     vec4 cl = skyClouds(R, uTime);
     refl = mix(refl, cl.rgb, cl.a * 0.8);
+    // depth ramp: pale lagoon over sand -> turquoise -> open-ocean blue
     float shallow = exp(-depth * 0.09);
     vec3 body = mix(uWaterDeep * 0.9, uWaterShallow * 1.15, shallow * 0.85 + 0.12);
+    body = mix(body, vec3(0.16, 0.5, 0.46) * (0.6 + 0.5 * uDay), exp(-depth * 0.35) * 0.55);
     body *= 0.25 + 0.75 * uDay;
     // subsurface glow on wave crests facing the light
     float sss = pow(max(dot(V, -uLightDir + N * 0.4), 0.0), 3.0) * max(vCrest, 0.0) * 0.6;
@@ -126,10 +130,17 @@ void main() {
     col = mix(body, refl, fres);
     vec3 H = normalize(uLightDir + V);
     float spec = pow(max(dot(N, H), 0.0), 600.0) * 6.0 + pow(max(dot(N, H), 0.0), 60.0) * 0.18;
+    // glitter: sparse sharp glints from the fine ripples, strongest along the sun's path
+    vec3 Ng = normalize(vNrm + vec3(n2.x + n3.x * 1.6, 0.0, n2.z + n3.z * 1.6) * 0.5);
+    spec += pow(max(dot(Ng, H), 0.0), 2500.0) * 5.0 * fineFade * smoothstep(0.1, 0.3, n3.x + n1.z * 0.5);
     col += uLightColor * spec * step(0.0, uLightDir.y);
     // foam: shoreline + crests
     float foamN = texture2D(uNormalTex, vWPos.xz * 0.19 + uTime * 0.01).a;
-    float shore = (1.0 - smoothstep(0.0, 1.8, depth)) * smoothstep(0.25, 0.75, foamN + 0.35 * sin(depth * 3.0 - uTime * 1.6));
+    float foamF = texture2D(uNormalTex, vWPos.xz * 0.53 - uTime * 0.02).a;
+    float lace = smoothstep(0.35, 0.7, foamN * 0.6 + foamF * 0.6 - 0.1); // broken, lacy foam texture
+    float swash = (1.0 - smoothstep(0.0, 0.7, depth)) * smoothstep(0.2, 0.6, foamN + 0.3 * sin(uTime * 0.9 + foamF * 2.0));
+    float bands = (1.0 - smoothstep(0.3, 3.2, depth)) * smoothstep(0.55, 0.95, sin(depth * 2.6 - uTime * 1.3 + foamN * 2.0)) * lace;
+    float shore = max(swash * (0.55 + 0.45 * lace), bands * 0.8);
     float crest = smoothstep(0.55, 0.95, vCrest) * smoothstep(0.5, 0.8, foamN);
     float foam = clamp(shore + crest * detailFade, 0.0, 1.0);
     col = mix(col, vec3(0.92, 0.96, 1.0) * (0.3 + 0.7 * uDay), foam * 0.85);
@@ -148,7 +159,9 @@ void main() {
     vec3 sky = skyBase(normalize(T + vec3(0.0, 0.001, 0.0)));
     float sunAmt = pow(max(dot(normalize(T), uSunDirW), 0.0), 90.0);
     vec3 win = mix(sky * 1.1, uWaterShallow * 1.6 + 0.08, 0.4) + uLightColor * sunAmt * 3.0;
-    vec3 under = uWaterShallow * (0.35 + 0.4 * uDay);
+    // underside of the surface: rippled, catching scattered light, so it never reads as a flat ceiling
+    float rip = 0.85 + 0.3 * (n1.x * n2.z + n3.x * 0.5);
+    vec3 under = uWaterShallow * (0.35 + 0.4 * uDay) * rip;
     float edge = smoothstep(0.62, 0.86, abs(cosI));
     col = mix(under, win, (1.0 - tir) * edge);
     col = mix(col, uWaterShallow * 1.4 * (0.4 + 0.6 * uDay), smoothstep(0.75, 0.95, vCrest) * 0.25);

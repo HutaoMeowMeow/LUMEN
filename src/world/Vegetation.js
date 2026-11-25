@@ -29,6 +29,43 @@ const CRAB_GLSL = /* glsl */ `
   transformed.x += 0.5 * sin(uTime * 0.35 + cph);
   transformed.y += 0.012 * abs(sin(uTime * 14.0 + cph)) * abs(cos(uTime * 0.35 + cph));`;
 
+// Surface shading per type (local units; corals/props are ~1 unit tall before instance scale).
+// d: shader relief [kind, scale, bump metres, cavity]; ao: contact darkening [min, height]; tl: sun translucency; leaf: translucency only where green
+const SURF = {
+  branch: { d: ['coral', 0.9, 0.012, 0.3], ao: [0.45, 0.5] },
+  staghorn: { d: ['coral', 0.7, 0.012, 0.3], ao: [0.45, 0.7] },
+  brain: { d: ['coral', 0.8, 0.015, 0.3], ao: [0.55, 0.3] },
+  fan: { d: ['leaf', 2, 0.002, 0.15], tl: 0.55 },
+  tube: { d: ['sponge', 1.2, 0.012, 0.35], ao: [0.5, 0.5] },
+  table: { d: ['coral', 0.8, 0.012, 0.3], ao: [0.5, 0.35] },
+  mushroom: { d: ['coral', 1.2, 0.006, 0.25] },
+  soft: { d: ['leaf', 2, 0.004, 0.2], ao: [0.5, 0.4], tl: 0.6 },
+  sponge: { d: ['sponge', 0.9, 0.018, 0.4], ao: [0.5, 0.5] },
+  anemone: { ao: [0.5, 0.2], tl: 0.5 },
+  seagrass: { ao: [0.5, 0.45], tl: 0.45 },
+  ribbon: { ao: [0.55, 0.3], tl: 0.45 },
+  kelp: { d: ['leaf', 1.5, 0.0, 0.12], ao: [0.55, 0.12], tl: 0.6 },
+  rock: { d: ['rock', 1.6, 0.05, 0.4], ao: [0.6, 0.35] },
+  urchin: { ao: [0.5, 0.15] },
+  cucumber: { d: ['sponge', 2.5, 0.004, 0.25] },
+  rubble: { d: ['coral', 1.5, 0.006, 0.3] },
+  barnacles: { d: ['rock', 3, 0.004, 0.3] },
+  palm: { d: ['plant', 0.45, 0.02, 0.3], ao: [0.6, 1.2], tl: 0.6, leaf: true },
+  palmShort: { d: ['plant', 0.45, 0.02, 0.3], ao: [0.6, 1.0], tl: 0.6, leaf: true },
+  broadleaf: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true },
+  broadleaf2: { d: ['plant', 0.45, 0.025, 0.3], ao: [0.55, 1.4], tl: 0.55, leaf: true },
+  bigleaf: { d: ['plant', 1.2, 0.003, 0.2], ao: [0.5, 0.5], tl: 0.7, leaf: true },
+  shrub: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true },
+  bush: { d: ['plant', 1.2, 0.004, 0.25], ao: [0.45, 0.7], tl: 0.5, leaf: true },
+  fern: { d: ['plant', 1.5, 0.002, 0.2], ao: [0.5, 0.15], tl: 0.7, leaf: true },
+  grass: { ao: [0.5, 0.4], tl: 0.5, leaf: true },
+  beachgrass: { ao: [0.55, 0.4], tl: 0.4, leaf: true },
+  flowers: { ao: [0.6, 0.3], tl: 0.5 },
+  driftwood: { d: ['bark', 0.6, 0.02, 0.35], ao: [0.6, 0.15] },
+  pine: { d: ['plant', 0.45, 0.02, 0.3], ao: [0.6, 1.2], tl: 0.35, leaf: true },
+  deadtree: { d: ['bark', 0.45, 0.025, 0.35], ao: [0.6, 1.2] },
+};
+
 // view: max draw distance (m). tilt: follow the ground normal. trunk: [height, radius] collider. lod: far geometry.
 // surf: tall enough to be seen from above water at full range (other sea-floor types stop at SEABED_ABOVE).
 // lo: geo(true) builds a reduced-detail mesh, used everywhere on Low and as the far LOD otherwise (always 64 m+ away).
@@ -65,13 +102,13 @@ const TYPES = [
   { name: 'broadleaf', geo: () => GEO.broadleafTree(41), lod: () => GEO.broadleafTree(41, true), pal: [0xffffff, 0xd8e8c0, 0xc8d8b0, 0xe0e0b8], wind: [0.04, 0.7, 7.0], side: 2, view: 900, trunk: [5, 0.42], land: true },
   { name: 'broadleaf2', geo: () => GEO.broadleafTree(48), lod: () => GEO.broadleafTree(48, true), pal: [0xffffff, 0xd0e0b0, 0xe8e8c0], wind: [0.04, 0.75, 7.0], side: 2, view: 900, trunk: [5, 0.42], land: true },
   { name: 'bigleaf', geo: () => GEO.bigLeafPlant(42), pal: [0xffffff, 0xd8f0b8, 0xc0d8a0], wind: [0.08, 1.4, 1.2], side: 2, view: 260, land: true },
-  { name: 'shrub', geo: (lo) => GEO.floweringShrub(45, lo), lo: true, pal: [0xffffff, 0xe0f0d0], wind: [0.04, 1.2, 1.2], view: 320, land: true },
+  { name: 'shrub', geo: (lo) => GEO.floweringShrub(45, lo), lo: true, pal: [0xffffff, 0xe0f0d0], wind: [0.04, 1.2, 1.2], side: 2, view: 320, land: true },
   { name: 'beachgrass', geo: () => GEO.beachGrass(43), pal: [0xffffff, 0xe8d8a0, 0xd0d8a0], wind: [0.1, 2.0, 0.9], side: 2, view: 160, land: true },
   { name: 'driftwood', geo: () => GEO.driftwood(44), pal: [0xffffff, 0xd8d0c0], view: 200, tilt: 1, land: true },
-  { name: 'bush', geo: (lo) => GEO.bush(13, lo), lo: true, pal: [0xffffff, 0xd0e8b0, 0xe8e0a0], wind: [0.06, 1.3, 1.2], view: 420, land: true },
+  { name: 'bush', geo: (lo) => GEO.bush(13, lo), lo: true, pal: [0xffffff, 0xd0e8b0, 0xe8e0a0], wind: [0.06, 1.3, 1.2], side: 2, view: 420, land: true },
   { name: 'fern', geo: () => GEO.fern(14), pal: [0xffffff, 0xd8f0b0], wind: [0.08, 1.6, 0.6], side: 2, view: 260, land: true },
   { name: 'grass', geo: () => GEO.seagrass(15, true), pal: [0xffffff, 0xe8e0a0, 0xc8e0a0], wind: [0.07, 2.2, 0.8], side: 2, view: 150, land: true },
-  { name: 'flowers', geo: () => GEO.flowers(16), pal: [0xff6a8a, 0xffe04a, 0xb08aff, 0xffffff, 0xff9a3a], wind: [0.05, 2.0, 0.5], view: 160, land: true },
+  { name: 'flowers', geo: () => GEO.flowers(16), pal: [0xff6a8a, 0xffe04a, 0xb08aff, 0xffffff, 0xff9a3a], wind: [0.05, 2.0, 0.5], side: 2, view: 160, land: true },
   { name: 'pine', geo: () => GEO.pine(17), pal: [0xffffff, 0xd0e0d0], wind: [0.12, 0.7, 6.0], view: 900, trunk: [4, 0.28], land: true },
   { name: 'deadtree', geo: () => GEO.deadTree(18), pal: [0xffffff], view: 700, trunk: [4, 0.28], land: true },
 ];
@@ -97,10 +134,14 @@ export class Vegetation {
     this.types = TYPES.map((t) => {
       const geo = t.geo(lowDetail);
       const sw = t.water || t.wind;
+      const sf = SURF[t.name] || {};
       const mat = stdMat({ vertexColors: true, roughness: t.metal ? 0.25 : 0.85, metalness: t.metal ? 0.1 : 0, side: t.side ?? 0, transparent: false }, {
         key: 'veg-' + t.name,
         sway: t.water ? 'water' : t.wind ? 'wind' : undefined,
         swayAmp: sw?.[0], swayFreq: sw?.[1], swayHeight: sw?.[2],
+        detail: sf.d && !lowDetail ? { kind: sf.d[0], scale: sf.d[1], bump: sf.d[2], cavity: sf.d[3] } : undefined,
+        ao: sf.ao && { min: sf.ao[0], height: sf.ao[1] },
+        translucent: sf.tl, leafOnly: sf.leaf,
         uniforms: { uGlowStrength: { value: t.glow ?? 0 } },
         vertDecl: 'attribute float aGlow; varying float vGlow;',
         vertMain: 'vGlow = aGlow;' + (t.vmain || ''),

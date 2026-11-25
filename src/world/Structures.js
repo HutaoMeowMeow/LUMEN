@@ -6,7 +6,9 @@ import { stdMat, U } from '../fx/materials.js';
 import { getNoiseTexture } from '../fx/textures.js';
 import { POIS, ISLANDS, HAVEN } from './layout.js';
 import { broadleafTree } from './geometries.js';
-import { mulberry32 } from './noise.js';
+import { mulberry32, createNoise } from './noise.js';
+
+const NS = createNoise(9191);
 
 const PI = Math.PI;
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -39,6 +41,7 @@ function materials() {
   MATS = {
     solid: stdMat({ vertexColors: true, roughness: 0.78, metalness: 0.15, side: THREE.DoubleSide }, {
       key: 'struct', uniforms: { uNoise: { value: getNoiseTexture() } }, fragDecl: 'uniform sampler2D uNoise;', fragColor: grime,
+      detail: { kind: 'rock', scale: 0.7, bump: 0.015, cavity: 0.22 }, // weathering: pitting, fine cracks (geometry is world-space)
     }),
     glow: stdMat({ vertexColors: true, color: 0x0a0a0a, roughness: 0.6 }, {
       key: 'structglow', fragEmissive: 'totalEmissiveRadiance += vColor.rgb * (0.88 + 0.12 * sin(uTime * 3.0 + vWPos.x * 2.0 + vWPos.z));',
@@ -84,6 +87,24 @@ class Kit {
   }
   _col(o) { return o.collide ?? (o.bucket !== 'glow'); }
 
+  // weathered standing stone: a subdivided box with eroded, chipped faces; collides as its box
+  stone(w, h, d, color, p, r, seed = 0) {
+    const g = new THREE.BoxGeometry(w, h, d, 3, 8, 2), q = g.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < q.count; i++) {
+      v.fromBufferAttribute(q, i);
+      const n = NS.fbm3(v.x * 0.9 + seed, v.y * 0.9, v.z * 0.9 + seed * 0.37, 4);
+      const edge = Math.max(Math.abs(v.x) / (w / 2), Math.abs(v.z) / (d / 2)); // corners erode most
+      const taper = 1 - 0.18 * Math.max(0, v.y / h + 0.1);
+      v.x *= taper * (1 + 0.16 * n - 0.07 * edge);
+      v.z *= taper * (1 + 0.16 * n - 0.07 * edge);
+      v.y += 0.12 * n * h * (v.y > 0 ? 1 : 0.3);
+      q.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    const m = this.put(g, color, p, r);
+    this.S.colliders.addBox(m, w / 2, h / 2, d / 2);
+    return m;
+  }
   box(w, h, d, color, p, r, o = {}) {
     const m = this.put(new THREE.BoxGeometry(w, h, d), color, p, r, o);
     if (this._col(o)) this.S.colliders.addBox(m, w / 2, h / 2, d / 2);
@@ -258,7 +279,9 @@ function giantTree(S) {
   g.scale(sc, sc * 1.15, sc);
   g.translate(best.x, best.h - 0.6, best.z);
   g.computeBoundingSphere();
-  const m = addMesh(S, g, stdMat({ vertexColors: true, roughness: 0.85 }, { key: 'giant-tree' }), 0);
+  const m = addMesh(S, g, stdMat({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide }, {
+    key: 'giant-tree', detail: { kind: 'plant', scale: 0.25, bump: 0.05, cavity: 0.35 }, translucent: 0.55, leafOnly: true,
+  }), 0);
   m.castShadow = m.receiveShadow = true;
   S.colliders.addCapsule(best.x, best.h - 1, best.z, best.x, best.h + 5 * sc, best.z, 0.42 * sc);
   S.clearings.push({ x: best.x, z: best.z, r: 15 });
@@ -273,12 +296,14 @@ function seaArch(S) {
   const x = I.x + Math.cos(a) * (r + 8), z = I.z + Math.sin(a) * (r + 8);
   const k = new Kit(S, 'arch', x, z, PI / 2 - a); // local x runs along the shore
   k.settle([[-8, 0], [8, 0]], 1.5);
-  const g = new THREE.TorusGeometry(7, 2.3, 12, 30, PI);
+  const g = new THREE.TorusGeometry(7, 2.3, 20, 56, PI);
   const p = g.attributes.position, v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
     const ang = Math.atan2(v.y, v.x), cx = Math.cos(ang) * 7, cy = Math.sin(ang) * 7;
-    const n = 1 + 0.22 * Math.sin(v.x * 1.7 + v.z * 2.3) * Math.cos(v.y * 1.3) + 0.12 * Math.sin(v.y * 3.1 + v.x * 0.7);
+    // broad lobes plus eroded pockets and layered ledges (noise is position-based, so the seam stays closed)
+    const n = 1 + 0.22 * Math.sin(v.x * 1.7 + v.z * 2.3) * Math.cos(v.y * 1.3) + 0.12 * Math.sin(v.y * 3.1 + v.x * 0.7)
+      + 0.14 * NS.fbm3(v.x * 0.45, v.y * 0.45, v.z * 0.45, 4) + 0.04 * Math.sin(v.y * 4.2 + NS.n3(v.x * 0.3, v.y * 0.3, v.z * 0.3) * 3);
     p.setXYZ(i, cx + (v.x - cx) * n, cy + (v.y - cy) * n * 1.1, v.z * n * (1.2 - 0.25 * Math.sin(ang)));
   }
   g.computeVertexNormals();
@@ -658,11 +683,12 @@ function stones(S) {
   const k = new Kit(S, 'stones', x, z);
   for (let i = 0; i < 9; i++) {
     const a = (i / 9) * PI * 2, sx = Math.cos(a) * 7.5, sz = Math.sin(a) * 7.5, h = 3.2 + rnd() * 1.6;
-    k.box(1.3, h + 1, 0.8, 0x8a8680, [sx, k.gy(sx, sz) + h / 2 - 0.5, sz], [rnd() * 0.12 - 0.06, -a + PI / 2, rnd() * 0.1 - 0.05]);
+    const tone = [0xa19c92, 0x9a968c, 0xa8a090][i % 3]; // pale weathered granite; the old 0x8a8680 read near-black on shadowed faces
+    k.stone(1.3, h + 1, 0.8, tone, [sx, k.gy(sx, sz) + h / 2 - 0.5, sz], [rnd() * 0.12 - 0.06, -a + PI / 2, rnd() * 0.1 - 0.05], i * 3.1);
   }
   const g = k.gy(0, 0);
-  k.box(4.6, 0.7, 1.1, 0x7a7670, [Math.cos(0.35) * 7.6, k.gy(7.6, 2.6) + 4.6, Math.sin(0.35) * 7.6], [0, -0.35 + PI, 0]);
-  k.box(2.4, 0.9, 1.6, 0x7a7670, [0, g + 0.35, 0], [0, 0.4, 0]);
+  k.stone(4.6, 0.7, 1.1, 0x948e84, [Math.cos(0.35) * 7.6, k.gy(7.6, 2.6) + 4.6, Math.sin(0.35) * 7.6], [0, -0.35 + PI, 0], 40);
+  k.stone(2.4, 0.9, 1.6, 0x948e84, [0, g + 0.35, 0], [0, 0.4, 0], 50);
   k.torus(0.55, 0.05, 0xc080ff, [0, g + 0.82, 0], [PI / 2, 0, 0], { bucket: 'glow', k: 2, collide: false });
   k.torus(0.28, 0.04, 0xc080ff, [0, g + 0.82, 0], [PI / 2, 0, 0], { bucket: 'glow', k: 2, collide: false });
   k.light([0, g + 1.5, 0], 0xb070ff, 7, 'steady', true);

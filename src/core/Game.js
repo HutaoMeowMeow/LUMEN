@@ -24,6 +24,7 @@ import { Settings, SaveGame } from './Settings.js';
 import { UI } from '../ui/UI.js';
 
 const BASE_SHALLOW = U.uWaterShallow.value.clone(), BASE_DEEP = U.uWaterDeep.value.clone();
+const TURQ_SHALLOW = new THREE.Color(0x26a6a2), TURQ_DEEP = new THREE.Color(0x0d4c5c); // sunlit lagoon tint near the surface
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
 const _f = new THREE.Vector3(), _v = new THREE.Vector3();
@@ -339,8 +340,9 @@ export class Game {
     U.uAirFogColor.value.copy(sky.horizon);
     U.uSunFogColor.value.copy(sky.sunColor).multiplyScalar(0.4 + 0.6 * day);
     const k = Math.max(0.04, day * 0.95 + 0.05) * Math.exp(-depth * 0.012) * (1 - cave * 0.8);
-    U.uWaterShallow.value.copy(BASE_SHALLOW).multiplyScalar(Math.max(k, 0.03));
-    U.uWaterDeep.value.copy(BASE_DEEP).multiplyScalar(Math.max(k * 1.3, 0.05));
+    const turq = (1 - THREE.MathUtils.smoothstep(depth, 3, 30)) * (1 - cave) * day; // shallow turquoise -> open blue below ~30 m
+    U.uWaterShallow.value.copy(BASE_SHALLOW).lerp(TURQ_SHALLOW, 0.6 * turq).multiplyScalar(Math.max(k, 0.03));
+    U.uWaterDeep.value.copy(BASE_DEEP).lerp(TURQ_DEEP, 0.45 * turq).multiplyScalar(Math.max(k * 1.3, 0.05));
     U.uCaveDark.value = cave;
     U.uWaterFogDensity.value = 0.017 + 0.01 * THREE.MathUtils.smoothstep(depth, 2, 70); // clear shallows, murkier depths
     U.uCausticStrength.value = day;

@@ -1,7 +1,7 @@
 // Procedural plant / coral / rock geometries. Every geometry carries position, normal, color and aGlow
 // so they can be merged and instanced with one material per type.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, createNoise } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -60,12 +60,59 @@ function displace(geo, amt, freq, seed = 0, flattenY = 1) {
   return geo;
 }
 
+// Foliage clump: a dark inner core wrapped in a shell of folded leaf cards. Leaf normals blend toward the clump's
+// sphere normal so the canopy shades as one soft volume instead of a mess of flat cards.
+function leafClump(c, r, n, rnd, c0, c1, opt = {}) {
+  const { size = 0.32, sq = 1, core = 0.7, coreCol = c0 } = opt;
+  const pos = [], nrm = [], col = [], idx = [];
+  const A = new THREE.Color(c0), B = new THREE.Color(c1), t = new THREE.Color();
+  const d = new THREE.Vector3(), q = new THREE.Vector3(), X = new THREE.Vector3(), N = new THREE.Vector3(), Z = new THREE.Vector3();
+  const w = new THREE.Vector3(), s = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const yv = 1 - 1.75 * ((i + 0.5) / n), rr = Math.sqrt(Math.max(0, 1 - yv * yv)), ph = i * 2.39996 + rnd() * 0.8;
+    d.set(Math.cos(ph) * rr, yv, Math.sin(ph) * rr).normalize();
+    q.copy(d).multiplyScalar(r * (0.72 + rnd() * 0.32));
+    q.y *= sq;
+    q.add(c);
+    X.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5);
+    X.addScaledVector(d, -X.dot(d)).normalize().addScaledVector(d, 0.45).add(s.set(0, -0.3, 0)).normalize();
+    N.copy(d).addScaledVector(X, -d.dot(X)).normalize();
+    Z.crossVectors(X, N);
+    const L = r * size * (0.75 + rnd() * 0.5), W = L * (0.42 + rnd() * 0.12);
+    const f = Math.min(1, Math.max(0, 0.45 + 0.4 * d.y + 0.25 * (rnd() - 0.5)));
+    t.copy(A).lerp(B, f).multiplyScalar(0.85 + rnd() * 0.3);
+    const b = pos.length / 3;
+    for (const [lx, ly, lz, k] of [[0, 0, 0, 0.8], [0.45 * L, 0.14 * W, 0.5 * W, 1], [L, -0.12 * L, 0, 1.12], [0.45 * L, 0.14 * W, -0.5 * W, 1]]) {
+      w.copy(q).addScaledVector(X, lx).addScaledVector(N, ly).addScaledVector(Z, lz);
+      pos.push(w.x, w.y, w.z);
+      s.copy(w).sub(c);
+      s.y /= sq;
+      s.normalize().multiplyScalar(0.7).addScaledVector(N, 0.3).normalize();
+      nrm.push(s.x, s.y, s.z);
+      col.push(t.r * k, t.g * k, t.b * k);
+    }
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  paint(g, 0xffffff);
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const k = new THREE.IcosahedronGeometry(r * core, 1);
+  displace(k, r * 0.12, 1.6 / r, c.x + c.z);
+  k.scale(1, sq, 1);
+  k.translate(c.x, c.y, c.z);
+  const kc = new THREE.Color(coreCol).multiplyScalar(0.55);
+  return [g, paint(k, kc.getHex(), coreCol)];
+}
+
 // ---------- underwater ----------
 export function branchCoral(seed = 1, lo = false) {
   const rnd = mulberry32(seed);
   const parts = [];
   const br = (base, dir, len, rad, depth) => {
-    const g = new THREE.CylinderGeometry(rad * 0.7, rad, len, lo ? 3 : 5, 1, depth > 0);
+    const g = new THREE.CylinderGeometry(rad * 0.7, rad, len, lo ? 3 : 7, 1, depth > 0);
     g.translate(0, len / 2, 0);
     parts.push(paint(orientTo(g, dir, base), 0xffffff, 0xffffff));
     const tip = base.clone().addScaledVector(dir, len);
@@ -76,7 +123,7 @@ export function branchCoral(seed = 1, lo = false) {
         br(tip, nd, len * (0.68 + rnd() * 0.2), rad * 0.72, depth - 1);
       }
     } else {
-      const s = new THREE.SphereGeometry(rad * 0.85, lo ? 3 : 5, lo ? 2 : 4);
+      const s = new THREE.SphereGeometry(rad * 0.85, lo ? 3 : 7, lo ? 2 : 5);
       s.translate(tip.x, tip.y, tip.z);
       parts.push(paint(s, 0xffffff));
     }
@@ -86,37 +133,48 @@ export function branchCoral(seed = 1, lo = false) {
   return paint(g, 0x6a5a66, 0xffffff, (f) => f * f * 0.0);
 }
 
+// Brain coral: a lumpy dome covered in meandering ridges with narrow dark grooves between them
 export function brainCoral(lo = false) {
-  const g = new THREE.SphereGeometry(0.5, lo ? 14 : 22, lo ? 7 : 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  let g = new THREE.SphereGeometry(0.5, lo ? 18 : 64, lo ? 9 : 32, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  g.deleteAttribute('uv');
+  g.deleteAttribute('normal');
+  g = mergeVertices(g); // weld the seam so the ridges shade continuously
   const p = g.attributes.position;
-  const v = new THREE.Vector3();
+  const v = new THREE.Vector3(), H = new Float32Array(p.count);
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
-    const ridge = Math.abs(Math.sin(N3.n3(v.x * 4, v.y * 4, v.z * 4) * 9)) * 0.04;
-    v.multiplyScalar(1 + ridge);
-    v.y = v.y * 0.75;
-    p.setXYZ(i, v.x, v.y - 0.05, v.z);
+    const lump = 1 + 0.12 * N3.fbm3(v.x * 2.2 + 7, v.y * 2.2, v.z * 2.2, 3);
+    const warp = N3.n3(v.x * 1.8, v.y * 1.8, v.z * 1.8) * 1.4 + N3.n3(v.x * 5 + 3, v.y * 5, v.z * 5) * 0.3;
+    const ridge = lo ? 0.7 : Math.sqrt(Math.abs(Math.sin(warp * 4.2))); // rounded crests, V-shaped grooves
+    H[i] = ridge;
+    v.multiplyScalar(lump * (1 + 0.05 * ridge));
+    p.setXYZ(i, v.x, v.y * 0.75 - 0.05, v.z);
   }
   g.computeVertexNormals();
-  return paint(g, 0x8a7a60, 0xfff2d8);
+  paint(g, 0x8a7a60, 0xfff2d8);
+  const c = g.attributes.color;
+  for (let i = 0; i < c.count; i++) { const k = 0.5 + 0.5 * H[i]; c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k); }
+  return g;
 }
 
 export function fanCoral(seed = 2, lo = false) {
   const rnd = mulberry32(seed);
   const parts = [];
+  // a fine, tapering lattice of twigs in one plane (sea fans grow broadside to the current)
   const br = (x, y, ang, len, w, depth) => {
-    const g = lo ? new THREE.PlaneGeometry(w, len) : new THREE.BoxGeometry(w, len, w * 0.5);
+    const g = lo ? new THREE.PlaneGeometry(w, len) : new THREE.CylinderGeometry(w * 0.36, w * 0.5, len, 4, 1, true);
     g.translate(0, len / 2, 0);
     g.rotateZ(ang);
-    g.translate(x, y, 0);
+    g.translate(x, y, (rnd() - 0.5) * 0.01);
     parts.push(paint(g, 0xffffff));
     if (depth > 0) {
-      const ex = x - Math.sin(ang) * len, ey = y + Math.cos(ang) * len;
-      br(ex, ey, ang + 0.28 + rnd() * 0.2, len * 0.8, w * 0.8, depth - 1);
-      br(ex, ey, ang - 0.28 - rnd() * 0.2, len * 0.8, w * 0.8, depth - 1);
+      const ex = x - Math.sin(ang) * len, ey = y + Math.cos(ang) * len, k = 0.74 + rnd() * 0.1;
+      br(ex, ey, ang + 0.2 + rnd() * 0.25, len * k, w * 0.74, depth - 1);
+      br(ex, ey, ang - 0.2 - rnd() * 0.25, len * (1.6 - k), w * 0.74, depth - (rnd() < 0.15 ? 2 : 1));
     }
   };
-  br(0, 0, 0, 0.3, 0.05, 5);
+  const depth = lo ? 4 : 6;
+  for (const a of [-0.45, 0, 0.45]) br(0, 0, a + (rnd() - 0.5) * 0.1, 0.26 - Math.abs(a) * 0.12, 0.05, depth - (a ? 1 : 0));
   const g = merged(parts);
   return paint(g, 0x553040, 0xffffff);
 }
@@ -138,20 +196,60 @@ export function tubeCoral(seed = 3) {
   return merged(parts);
 }
 
-export function tableCoral(seed = 4) {
-  const parts = [];
-  const stem = new THREE.CylinderGeometry(0.07, 0.12, 0.35, 6);
-  stem.translate(0, 0.175, 0);
-  parts.push(paint(stem, 0x7a6a50, 0xbfae90));
-  const top = new THREE.CylinderGeometry(0.75, 0.5, 0.07, 18, 1);
-  const p = top.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), z = p.getZ(i), a = Math.atan2(z, x), r = Math.hypot(x, z);
-    p.setY(i, p.getY(i) + 0.35 + Math.sin(a * 5 + seed) * 0.03 * r + r * r * 0.06);
+// One table plate: polar grid with a scalloped rim, radial growth ridges, upturned edge and a darker underside
+function coralPlate(R, thick, seed, S = 64, nr = 5) {
+  const pos = [], col = [], idx = [];
+  const rim = (a) => 1 + 0.08 * Math.sin(a * 7 + seed) + 0.05 * Math.sin(a * 13 + seed * 2) + 0.05 * N3.n2(Math.cos(a) * 2 + seed, Math.sin(a) * 2);
+  const vtx = (r, a, bottom) => {
+    const u = r / R, x = Math.cos(a) * r * rim(a), z = Math.sin(a) * r * rim(a);
+    const y = 0.09 * u * u * R + 0.004 * Math.sin(a * 46 + seed) * u + 0.02 * Math.sin(a * 5 + seed) * u - (bottom ? thick * (1 - 0.55 * u) : 0);
+    pos.push(x, y, z);
+    const k = bottom ? 0.5 : 0.82 + 0.18 * u + 0.08 * Math.sin(a * 46 + seed); // pale growing edge, shaded underside
+    col.push(k, k, k);
+  };
+  for (const bottom of [false, true]) {
+    vtx(0, 0, bottom);
+    for (let k = 1; k <= nr; k++) for (let j = 0; j < S; j++) vtx((R * k) / nr, (j / S) * Math.PI * 2, bottom);
   }
-  top.computeVertexNormals();
-  parts.push(paint(top, 0xd8c8a8, 0xffffff));
-  return merged(parts);
+  const half = 1 + nr * S, ring = (k, j) => 1 + (k - 1) * S + (j % S);
+  for (let h = 0; h < 2; h++) {
+    const o = h * half, tri = (a, b, c) => (h ? idx.push(o + a, o + c, o + b) : idx.push(o + a, o + b, o + c));
+    for (let j = 0; j < S; j++) {
+      tri(0, ring(1, j + 1), ring(1, j));
+      for (let k = 1; k < nr; k++) { tri(ring(k, j), ring(k, j + 1), ring(k + 1, j)); tri(ring(k, j + 1), ring(k + 1, j + 1), ring(k + 1, j)); }
+    }
+  }
+  for (let j = 0; j < S; j++) {
+    const t0 = ring(nr, j), t1 = ring(nr, j + 1);
+    idx.push(t0, t1, half + t0, t1, half + t1, half + t0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  paint(g, 0xffffff);
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+
+// Table coral: a gnarled stalk carrying two or three overlapping tiers of plates
+export function tableCoral(seed = 4) {
+  const rnd = mulberry32(seed);
+  const parts = [];
+  const stem = new THREE.CylinderGeometry(0.06, 0.14, 0.4, 9, 3);
+  displace(stem, 0.025, 7, seed);
+  stem.translate(0, 0.2, 0);
+  parts.push(paint(stem, 0x5a4a38, 0xb0a080));
+  for (const [R, y, ox, oz] of [[0.75, 0.36, 0, 0], [0.46, 0.27, 0.32, 0.18], [0.34, 0.47, -0.22, -0.14]]) {
+    const pl = coralPlate(R * (0.92 + rnd() * 0.16), 0.05, seed + R * 10);
+    pl.rotateY(rnd() * Math.PI * 2);
+    pl.translate(ox, y, oz);
+    parts.push(pl);
+  }
+  const g = merged(parts);
+  const c = g.attributes.color, base = new THREE.Color(0xd8c8a8);
+  for (let i = 0; i < c.count; i++) c.setXYZ(i, c.getX(i) * base.r, c.getY(i) * base.g, c.getZ(i) * base.b);
+  return g;
 }
 
 export function anemone(seed = 5) {
@@ -219,8 +317,17 @@ export function ribbonweed(seed = 7) {
 }
 
 export function rock(seed = 8, flat = 0.7) {
-  const g = new THREE.IcosahedronGeometry(0.5, 2);
+  const g = new THREE.IcosahedronGeometry(0.5, 3);
   displace(g, 0.22, 2.1, seed, flat);
+  // fracture planes: clip the lumpy blob into broad flat cleavage faces with crisp edges
+  const rnd = mulberry32(seed * 7 + 1), p = g.attributes.position, v = new THREE.Vector3();
+  const cuts = Array.from({ length: 5 }, () => [new THREE.Vector3(rnd() - 0.5, (rnd() - 0.3) * flat, rnd() - 0.5).normalize(), 0.26 + rnd() * 0.12]);
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    for (const [n, d] of cuts) { const e = v.dot(n) - d; if (e > 0) v.addScaledVector(n, -e * 0.9); }
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
   g.translate(0, 0.15, 0);
   return paint(g, 0x6a6660, 0x8c867c);
 }
@@ -276,15 +383,15 @@ export function tubeWorms(seed = 11) {
 
 // ---------- land ----------
 // Feathered frond: arched spine along +x with paired leaflets drooping off both sides.
-function frond(len, rnd, droop = 0.18, n = 14) {
+function frond(len, rnd, droop = 0.18, n = 14, rise = 0.35, sag = 1) {
   const v = [], idx = [];
-  const spineY = (x) => 0.35 * x - droop * x * x;
+  const spineY = (x) => rise * x - droop * x * x;
   for (let i = 0; i < n; i++) {
     const x = ((i + 0.5) / n) * len, y = spineY(x), dx = len / n;
     const L = (0.15 + 0.85 * Math.sin((x / len) * Math.PI * 0.92 + 0.15)) * len * 0.3;
     for (const s of [-1, 1]) {
       const b = v.length / 3;
-      const tipX = x + L * 0.45, tipY = y - L * (0.45 + rnd() * 0.25), tipZ = s * L;
+      const tipX = x + L * 0.45, tipY = y - L * (0.45 + rnd() * 0.25) * sag, tipZ = s * L;
       v.push(x - dx * 0.45, y, 0, x + dx * 0.45, spineY(x + dx * 0.45), 0, tipX + dx * 0.2, tipY, tipZ, tipX - dx * 0.2, tipY - 0.02, tipZ * 0.97);
       idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
     }
@@ -341,33 +448,31 @@ export function bush(seed = 13, lo = false) {
   const rnd = mulberry32(seed);
   const parts = [];
   for (let i = 0; i < 5; i++) {
-    const g = new THREE.IcosahedronGeometry(0.45 + rnd() * 0.25, lo ? 0 : 1);
+    const r = 0.45 + rnd() * 0.25, c = new THREE.Vector3((rnd() - 0.5) * 0.8, 0.35 + rnd() * 0.3, (rnd() - 0.5) * 0.8);
+    if (!lo) { parts.push(...leafClump(c, r, 46, rnd, 0x24401a, 0x5a8430, { size: 0.36 })); continue; }
+    const g = new THREE.IcosahedronGeometry(r, 0);
     displace(g, 0.12, 3, seed + i);
-    g.translate((rnd() - 0.5) * 0.8, 0.35 + rnd() * 0.3, (rnd() - 0.5) * 0.8);
+    g.translate(c.x, c.y, c.z);
     parts.push(paint(g, 0x24401a, 0x4a7428));
   }
   return merged(parts);
 }
 
+// Fern: a rosette of arching fronds, each a rachis with paired leaflets shrinking toward the tip
 export function fern(seed = 14) {
   const rnd = mulberry32(seed);
   const parts = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 9; i++) {
     const len = 0.8 + rnd() * 0.4;
-    const g = new THREE.PlaneGeometry(len, 0.22, 6, 1);
-    const q = g.attributes.position;
-    for (let k = 0; k < q.count; k++) {
-      const x = q.getX(k) + len / 2, y = q.getY(k);
-      const w = Math.sin((x / len) * Math.PI);
-      q.setXYZ(k, x, 0.9 * x - 0.75 * x * x, y * w);
-    }
-    g.rotateY((i / 8) * Math.PI * 2 + rnd() * 0.4);
-    g.computeVertexNormals();
+    const g = frond(len, rnd, 0.95 / len, 12, 1.05, 0.25);
+    g.scale(1, 1, 0.55);
+    g.rotateY((i / 9) * Math.PI * 2 + rnd() * 0.4);
     parts.push(paint(g, 0x1e3a12, 0x4e7a24));
   }
   return merged(parts);
 }
 
+// Flowers: thin stems, a pair of leaves, and five-petal cupped blooms with a pale centre
 export function flowers(seed = 15) {
   const rnd = mulberry32(seed);
   const parts = [];
@@ -377,10 +482,27 @@ export function flowers(seed = 15) {
     const s = new THREE.CylinderGeometry(0.008, 0.01, h, 3);
     s.translate(x, h / 2, z);
     parts.push(paint(s, 0x3a5a1a));
-    const head = new THREE.IcosahedronGeometry(0.05, 0);
-    head.scale(1, 0.5, 1);
-    head.translate(x, h, z);
-    parts.push(paint(head, 0xffffff));
+    for (const side of [-1, 1]) {
+      const lf = new THREE.PlaneGeometry(0.09, 0.03);
+      lf.translate(0.045, 0, 0);
+      lf.rotateZ(0.5);
+      lf.rotateY(side > 0 ? rnd() * 3 : rnd() * 3 + Math.PI);
+      lf.translate(x, h * (0.25 + rnd() * 0.2), z);
+      parts.push(paint(lf, 0x2e5216));
+    }
+    const rot = rnd() * Math.PI;
+    for (let k = 0; k < 5; k++) {
+      const pt = new THREE.PlaneGeometry(0.05, 0.034);
+      pt.translate(0.03, 0, 0);
+      pt.rotateX(-Math.PI / 2);
+      pt.rotateZ(0.45); // petals cup upward
+      pt.rotateY(rot + (k / 5) * Math.PI * 2);
+      pt.translate(x, h, z);
+      parts.push(paint(pt, 0xffffff));
+    }
+    const c = new THREE.IcosahedronGeometry(0.014, 0);
+    c.translate(x, h + 0.008, z);
+    parts.push(paint(c, 0xfff0a0));
   }
   return merged(parts);
 }
@@ -696,8 +818,8 @@ export function broadleafTree(seed = 41, lod = false) {
   // crown: big clumps on the limb tips, smaller ones lower in the crown so the silhouette is rounded, not an umbrella
   for (const [list, r0, sq] of [[tips, 1.6, 0.8], [mids, 1.1, 0.9]]) for (const t of list) {
     const r = r0 + rnd() * 0.9;
-    const c = new THREE.IcosahedronGeometry(r, lod ? 0 : 1);
-    if (!lod) displace(c, 0.45, 0.9, seed + t.x);
+    if (!lod) { parts.push(...leafClump(new THREE.Vector3(t.x, t.y + 0.4, t.z), r, Math.round(r * 42), rnd, 0x2a521a, 0x8ab84c, { size: 0.36, sq, core: 0.72 })); continue; }
+    const c = new THREE.IcosahedronGeometry(r, 0);
     c.scale(1, sq, 1);
     c.translate(t.x, t.y + 0.4, t.z);
     parts.push(paint(c, 0x34601f, 0x86b84a));
@@ -791,11 +913,12 @@ export function floweringShrub(seed = 45, lo = false) {
   const blobs = [];
   for (let i = 0; i < 5; i++) {
     const r = 0.4 + rnd() * 0.25;
-    const g = new THREE.IcosahedronGeometry(r, lo ? 0 : 1);
-    displace(g, 0.14, 3, seed + i);
     const c = new THREE.Vector3((rnd() - 0.5) * 0.9, 0.35 + rnd() * 0.35, (rnd() - 0.5) * 0.9);
-    g.translate(c.x, c.y, c.z);
     blobs.push([c, r]);
+    if (!lo) { parts.push(...leafClump(c, r, 42, rnd, 0x1c3a14, 0x4a7a2a, { size: 0.34 })); continue; }
+    const g = new THREE.IcosahedronGeometry(r, 0);
+    displace(g, 0.14, 3, seed + i);
+    g.translate(c.x, c.y, c.z);
     parts.push(paint(g, 0x1c3a14, 0x3e6a24));
   }
   for (let i = 0; i < 18; i++) {
