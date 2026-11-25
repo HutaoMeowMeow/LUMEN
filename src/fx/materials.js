@@ -280,6 +280,12 @@ float lumenLeaf = smoothstep(0.0, 0.06, diffuseColor.g - diffuseColor.r);
   }
   #endif
 #endif
+{
+  // moonlight: rods see little colour, so above-water albedo greys toward a cool luminance at night (grass read neon green)
+  float lumenNt = (1.0 - smoothstep(0.08, 0.55, uDay)) * step(uWaterLevel, vWPos.y) * (1.0 - uCamUnder);
+  float lumenY = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  diffuseColor.rgb = mix(diffuseColor.rgb, lumenY * vec3(0.78, 0.88, 1.05), lumenNt * (0.55 + 0.25 * lumenLeaf));
+}
 `;
 
 // Canopy cards carry outward, clump-blended normals; the double-sided flip pointed every back-facing card into

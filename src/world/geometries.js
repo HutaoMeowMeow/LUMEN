@@ -1042,6 +1042,30 @@ export function driftwood(seed = 44) {
   return merged(parts);
 }
 
+// Exposed surface roots for big jungle trunks: a ring of half-buried tubes that snake outward, fork and dive into the soil
+export function surfaceRoots(seed = 46) {
+  const rnd = mulberry32(seed);
+  const parts = [];
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const root = (o, side, r0, L, y0, wander, depth) => {
+    const ys = [y0, 0.06, 0.02 + rnd() * 0.08, -0.02, -depth]; // arches off the trunk, rides the surface, dives
+    const pts = [0, 0.28, 0.55, 0.8, 1].map((t, k) => V(0, ys[k], 0).addScaledVector(o, L * t).addScaledVector(side, wander * L * t * t));
+    parts.push(branchTube(pts, (t, a) => [r0 * (1 - 0.75 * t) * (1 + 0.12 * Math.sin(a * 3 + L)), 0.25 * (1 - t)], 6, 10, 0x3e3428, 0x6a5c48));
+    return pts;
+  };
+  for (let i = 0, n = 6 + Math.floor(rnd() * 3); i < n; i++) {
+    const a = ((i + rnd() * 0.7) / n) * Math.PI * 2, o = V(Math.cos(a), 0, Math.sin(a)), side = V(-o.z, 0, o.x);
+    const L = 1.4 + rnd() * 2.2, w = (rnd() - 0.5) * 0.6;
+    const pts = root(o, side, 0.13 + rnd() * 0.07, L, 0.3, w, 0.3);
+    if (rnd() < 0.5) { // a thinner fork leaves the root halfway out
+      const b = pts[2], fo = o.clone().addScaledVector(side, rnd() < 0.5 ? 0.8 : -0.8).normalize();
+      const fl = 0.6 + rnd() * 0.9;
+      parts.push(branchTube([b.clone(), b.clone().addScaledVector(fo, fl * 0.5).setY(0.02), b.clone().addScaledVector(fo, fl).setY(-0.2)], (t) => [0.06 * (1 - 0.6 * t), 0.2 * (1 - t)], 5, 5, 0x3e3428, 0x6a5c48));
+    }
+  }
+  return merged(parts);
+}
+
 // Hibiscus-like shrub: leafy mound dotted with flowers
 export function floweringShrub(seed = 45, lo = false) {
   const rnd = mulberry32(seed), lrnd = mulberry32(seed * 7 + 1);

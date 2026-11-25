@@ -25,9 +25,13 @@ vec4 terrainTri(vec3 P, vec3 Nw, float s) {
 // rock relief 0..1: grain, bedding strata and fractures
 float terrainRockH(vec3 P, vec3 Nw, out float crack) {
   vec4 a = terrainTri(P, Nw, 0.045), b = terrainTri(P, Nw, 0.19);
-  float strata = 0.5 + 0.5 * sin(P.y * 1.6 + a.b * 7.0 + a.r * 2.0);
-  crack = smoothstep(0.86, 0.97, b.a) * (0.5 + 0.5 * a.g);
-  return clamp(0.25 + 0.35 * a.r + 0.25 * b.g + 0.2 * strata - crack * 0.6, 0.0, 1.0);
+  // bedding: sawtooth ledges (sharp lip, slow back-slope) warped so beds pinch and wander instead of ruling lines
+  float strata = fract(P.y * 0.55 + a.b * 2.2 + a.r * 0.8);
+  strata = smoothstep(0.0, 0.85, strata) * (1.0 - smoothstep(0.86, 1.0, strata)); // slow rise, sharp lip
+  strata *= smoothstep(0.25, 0.65, b.r); // beds come and go along the face instead of ruling every metre
+  // fractures: thin broken lines along a noise isoline, not filled blotches
+  crack = (1.0 - smoothstep(0.0, 0.035, abs(b.a - 0.5))) * smoothstep(0.45, 0.7, a.g);
+  return clamp(0.25 + 0.35 * a.r + 0.22 * b.g + 0.2 * strata - crack * 0.5, 0.0, 1.0);
 }
 vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   vec4 bio = texture2D(uBiome, (P.xz + uWorldHalf) / (2.0 * uWorldHalf));
@@ -38,12 +42,12 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
   float y = P.y;
   float crack;
   float rh = terrainRockH(P, Nw, crack);
-  vec3 sand = mix(vec3(0.72, 0.57, 0.37), vec3(0.88, 0.74, 0.5), n1) * (0.88 + 0.24 * n2); // warm cream, not white under the noon sun
+  vec3 sand = mix(vec3(0.62, 0.49, 0.32), vec3(0.8, 0.66, 0.45), n1) * (0.88 + 0.24 * n2); // warm tan: the paler cream washed out to white // warm cream, not white under the noon sun
   sand = mix(sand, sand * vec3(1.04, 0.93, 0.86), smoothstep(0.55, 0.8, n3)); // broad warm/pale drifts
   vec3 silt = mix(vec3(0.46, 0.45, 0.38), vec3(0.6, 0.56, 0.45), n1);
-  vec3 rock = mix(vec3(0.3, 0.285, 0.265), vec3(0.55, 0.5, 0.43), rh) * (0.9 + 0.2 * n2);
+  vec3 rock = mix(vec3(0.3, 0.27, 0.235), vec3(0.56, 0.48, 0.39), rh) * (0.9 + 0.2 * n2); // warm grey-brown, so the scanned crags sit in it
   rock = mix(rock, rock * vec3(1.08, 0.95, 0.82), smoothstep(0.4, 0.8, n3) * 0.6); // iron staining
-  rock *= 1.0 - crack * 0.45;
+  rock *= 1.0 - crack * 0.3;
   // moss and lichen on ledges and the upper faces of dry rock
   float moss = smoothstep(0.45, 0.8, Nw.y + 0.35 * (n1 - 0.5)) * smoothstep(1.5, 4.0, y) * (1.0 - bio.a);
   rock = mix(rock, mix(vec3(0.16, 0.25, 0.09), vec3(0.42, 0.44, 0.3), n2) * (0.8 + 0.3 * rh), moss * 0.7);
@@ -66,16 +70,16 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     sand = mix(sand, sand * vec3(0.62, 0.58, 0.55), smoothstep(0.86, 0.97, fA.a) * 0.35 * fineS);
     sand = mix(sand, sand * vec3(1.18, 1.16, 1.12), smoothstep(0.88, 0.97, fA.r) * 0.3 * fineS); // shell grit: a lift, not white dots
     // tide line: wavy wet band, damp darker sand above it, a thin wrack of dried weed at the high-water mark
-    float wl = 1.05 + 0.4 * (fB.r - 0.5) + 0.18 * sin(P.x * 0.09 + P.z * 0.06 + 6.0 * n3);
+    float wl = 1.3 + 0.4 * (fB.r - 0.5) + 0.18 * sin(P.x * 0.09 + P.z * 0.06 + 6.0 * n3);
     float wet = 1.0 - smoothstep(wl - 0.12, wl + 0.08, y);
     float damp = 1.0 - smoothstep(wl, wl + 0.9 + 0.4 * n1, y);
     float hw = wl + 1.05 + 0.25 * n2;
     float wrack = (1.0 - smoothstep(0.03, 0.14, abs(y - hw))) * smoothstep(0.45, 0.7, fB.b + 0.3 * (n2 - 0.5));
     vec3 drySand = sand;
     sand = mix(sand, sand * vec3(0.8, 0.78, 0.76), damp * 0.8);
-    sand = mix(sand, drySand * vec3(0.56, 0.54, 0.53), wet);
+    sand = mix(sand, drySand * vec3(0.5, 0.47, 0.44), wet);
     sand = mix(sand, mix(vec3(0.2, 0.17, 0.11), vec3(0.36, 0.3, 0.18), fA.g), wrack * 0.75);
-    float sandRough = mix(mix(0.93 + 0.07 * fA.g, 0.82, damp), 0.42 + 0.08 * fA.r, wet);
+    float sandRough = mix(mix(0.93 + 0.07 * fA.g, 0.82, damp), 0.55 + 0.1 * fA.r, wet); // wet sand glistens, but not like metal
     // forest floor: leaf litter mosaic, humus, root/twig lines and pebbles; grass ground cover in the open
     vec3 leafC = mix(vec3(0.2, 0.13, 0.07), vec3(0.38, 0.25, 0.11), fA.g); // tropical litter is dark and damp; pale tan read as beach sand
     leafC = mix(leafC, vec3(0.3, 0.3, 0.12), smoothstep(0.62, 0.8, fA.r) * 0.6); // fresh yellow-green fall
@@ -85,6 +89,7 @@ vec3 terrainAlbedo(vec3 P, vec3 Nw, out float rough) {
     vec3 floorC = mix(humus, leafC, smoothstep(0.25, 0.6, fA.a + 0.25 * fB.g) * (0.55 + 0.45 * fine));
     float twig = smoothstep(0.9, 0.97, texture2D(uNoise, P.xz * vec2(0.23, 0.61) + n1).a) * fine;
     floorC = mix(floorC, vec3(0.25, 0.19, 0.13), twig * 0.7);
+    floorC *= mix(0.62, 1.0, smoothstep(0.25, 0.55, fB.a + 0.2 * (n2 - 0.5))); // damp dark hollows between drier litter
     float pebble = smoothstep(0.83, 0.9, texture2D(uNoise, P.xz * 1.1 + 0.37).r) * fine;
     floorC = mix(floorC, vec3(0.42, 0.4, 0.37) * (0.8 + 0.4 * fA.g), pebble * 0.8);
     // litter lies under the trees (tCanopy); in the open only the odd bare scuff breaks the turf
@@ -149,20 +154,24 @@ roughnessFactor = tRough;
   float s = vWPos.y < 0.5 ? 0.9 : mix(0.5, 0.9, disturbed * bch);
   vec2 wd = vec2(0.8, 0.6);
   float ph = dot(q, wd) * 9.0 + texture2D(uNoise, q * 0.06).r * 10.0;
-  vec2 dg = wd * (cos(ph) + 0.35 * cos(2.0 * ph)) * 0.11 * dry * (1.0 - 0.85 * disturbed);
+  vec2 dg = wd * (cos(ph) + 0.35 * cos(2.0 * ph)) * 0.15 * dry * (1.0 - 0.85 * disturbed);
+  s += 0.7 * tCanopy * (1.0 - bch); // forest floor: lumpier litter and root bumps under the trees
+  // beach: broad swells and scoured hollows (metres), visible well past the fine ripples
+  float m0 = texture2D(uNoise, q * 0.05).b, mx = texture2D(uNoise, (q + vec2(e, 0.0)) * 0.05).b, mz = texture2D(uNoise, (q + vec2(0.0, e)) * 0.05).b;
+  vec2 mg = vec2(mx - m0, mz - m0) / e * 1.6 * bch * (1.0 - rip) * (1.0 - smoothstep(60.0, 180.0, length(vWPos - cameraPosition)));
   float h0 = texture2D(uNoise, q * 0.37).g + rip * 0.5 * sin(dot(q, vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, q * 0.03).r * 8.0);
   float hx = texture2D(uNoise, (q + vec2(e, 0.0)) * 0.37).g + rip * 0.5 * sin(dot(q + vec2(e, 0.0), vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, (q + vec2(e, 0.0)) * 0.03).r * 8.0);
   float hz = texture2D(uNoise, (q + vec2(0.0, e)) * 0.37).g + rip * 0.5 * sin(dot(q + vec2(0.0, e), vec2(0.9, 0.35)) * 2.2 + texture2D(uNoise, (q + vec2(0.0, e)) * 0.03).r * 8.0);
-  vec3 bw = normalize(vec3(-(hx - h0) / e * 0.12 * s - dg.x, 1.0, -(hz - h0) / e * 0.12 * s - dg.y));
   float fade = 1.0 - smoothstep(25.0, 70.0, length(vWPos - cameraPosition));
+  vec3 bw = normalize(vec3((-(hx - h0) / e * 0.12 * s - dg.x) * fade - mg.x, 1.0, (-(hz - h0) / e * 0.12 * s - dg.y) * fade - mg.y));
   vec3 bv = normalize((viewMatrix * vec4(bw, 0.0)).xyz);
   vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-  normal = normalize(normal + (bv - up) * fade * normalize(vWNormal).y);
+  normal = normalize(normal + (bv - up) * normalize(vWNormal).y);
   // cliff relief: derivative bump from the triplanar rock height, on slopes only
   vec3 nw = normalize(vWNormal);
   float cr;
   float rh = terrainRockH(vWPos, nw, cr);
-  float bf = 0.35 * smoothstep(0.22, 0.45, 1.0 - nw.y) * (1.0 - smoothstep(30.0, 90.0, length(vViewPosition)));
+  float bf = 0.6 * smoothstep(0.22, 0.45, 1.0 - nw.y) * (1.0 - smoothstep(40.0, 120.0, length(vViewPosition)));
   vec2 dH = vec2(dFdx(rh), dFdy(rh)) * bf;
   vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
   vec3 R1 = cross(sy, normal), R2 = cross(normal, sx);

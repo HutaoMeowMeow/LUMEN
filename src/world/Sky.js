@@ -23,6 +23,12 @@ float skyFbm3(vec2 p) { // cheaper 3-octave fbm on the same range, for cloud lig
   for (int i = 0; i < 3; i++) { v += a * skyNoise(p); p = p * 2.03 + vec2(17.1, 9.2); a *= 0.5; }
   return v * 1.107;
 }
+float skyBillow(vec2 p) { // folded value noise: rounded heaps with creases between them (cauliflower lumps)
+  float v = 0.0, a = 0.5;
+  // each octave rotated: folded value noise otherwise creases along its lattice into square, melted-looking cells
+  for (int i = 0; i < 3; i++) { float k = skyNoise(p) * 0.6 + skyNoise(p * 1.37 + 9.1) * 0.4; v += a * (1.0 - abs(2.0 * k - 1.0)); p = mat2(1.6, -1.2, 1.2, 1.6) * p + vec2(5.3, 1.7); a *= 0.5; }
+  return v * 1.143;
+}
 float skyNight() { return 1.0 - smoothstep(-0.2, 0.02, uSunDir.y); }
 float skyMoonUp() { return smoothstep(-0.04, 0.2, uMoonDir.y); }
 vec3 skySunTint() { return mix(vec3(1.0, 0.45, 0.18), vec3(1.0, 0.86, 0.64), smoothstep(-0.02, 0.4, uSunDir.y)); }
@@ -109,13 +115,20 @@ vec4 skyClouds(vec3 d, float t) {
   // mid layer: domain-warped billows, so no obvious tiling
   vec2 uv = base * 1.6 + vec2(t * 0.006, t * 0.0025);
   vec2 w = vec2(skyNoise(uv * 0.7 + 3.1), skyNoise(uv * 0.7 + 7.7)) - 0.5;
-  vec2 q = uv + w * 0.45; // stronger warp smeared the billows into brush strokes
+  vec2 q = uv + w * 0.2; // stronger warp smeared the billows into brush strokes
   float n = skyFbm(q);
+  n += (skyFbm3(uv * 0.3 + 21.0) - 0.5) * 0.4; // broad field splits the deck into separate clouds with clear sky between
   // weather scale: clear gaps and denser banks within one view; fine erosion frays the edges
   float cov = mix(0.66, 0.34, uCloudCover) + (skyNoise(uv * 0.16 + 40.0) - 0.5) * 0.22;
-  n += (1.0 - abs(2.0 * skyNoise(q * 3.2 + 5.0) - 1.0) - 0.6) * 0.07 * (1.0 - smoothstep(cov, cov + 0.2, n)); // rounded heaps at the rims
-  n -= (skyNoise(q * 9.0) - 0.5) * 0.07 * (1.0 - smoothstep(cov, cov + 0.2, n));
-  float c = smoothstep(cov, cov + 0.16, n);
+  // value-noise minima punched round holes through thick banks: where the smoother large-scale field is well inside
+  // the cloud, the fine field may not dip below it
+  float nL = skyFbm3(q);
+  n = mix(n, max(n, nL), smoothstep(cov - 0.02, cov + 0.1, nL));
+  // billowed heaps through the whole body (not only the rims), so interiors are lumpy instead of melted
+  float bq = skyBillow(q * 2.4 + 5.0);
+  n += (bq - 0.62) * 0.15;
+  n -= (skyNoise(q * 9.0) - 0.5) * 0.06 * (1.0 - smoothstep(cov, cov + 0.2, n));
+  float c = smoothstep(cov, cov + 0.09, n);
   float thick = smoothstep(cov, cov + 0.5, n);
   // high layer: thin wisps stretched along the wind, drifting faster
   vec2 uv2 = mat2(0.8, -0.6, 0.6, 0.8) * base * vec2(0.7, 2.6) + vec2(t * 0.011, 0.0) + w * 1.6;
@@ -131,13 +144,16 @@ vec4 skyClouds(vec3 d, float t) {
   // sky-blue ambient in the shadows, darker cores, silver lining when looking toward the sun
   float l1 = smoothstep(cov, cov + 0.3, skyFbm3(q + uSunDir.xz * 0.05));
   float l2 = smoothstep(cov, cov + 0.3, skyFbm3(q + uSunDir.xz * 0.14));
-  float sl = exp(-1.5 * (l1 + 0.5 * l2)) * mix(1.0, 1.0 - exp(-4.0 * c), 0.5) * smoothstep(-0.06, 0.04, sy);
+  float sl = exp(-2.2 * (l1 + 0.5 * l2)) * mix(1.0, 1.0 - exp(-4.0 * c), 0.5) * smoothstep(-0.06, 0.04, sy);
   float sunAmt = max(dot(d, uSunDir), 0.0);
   vec3 sunC = skySunTint();
   vec3 ambC = mix(vec3(0.36, 0.33, 0.42), vec3(0.6, 0.67, 0.78), smoothstep(0.0, 0.35, sy));
   ambC = mix(ambC, vec3(0.5, 0.37, 0.4), dusk * 0.6); // rose-grey bodies at golden hour
   float thinD = clamp(1.0 - c, 0.0, 1.0) * smoothstep(0.0, 0.3, c);
-  vec3 dc = ambC * (1.0 - 0.35 * thick) * 0.8 + sunC * sl * (0.55 + 0.45 * pow(sunAmt, 4.0));
+  // per-heap light: the side of each billow facing the sun is lit, its lee and the creases fall into shadow
+  float lump = clamp(0.5 + (bq - skyBillow((q + uSunDir.xz * 0.04) * 2.4 + 5.0)) * 4.5, 0.0, 1.0);
+  float crease = smoothstep(0.35, 0.75, bq);
+  vec3 dc = ambC * (1.0 - 0.55 * thick) * (0.6 + 0.4 * crease) * 0.85 + sunC * sl * (0.55 + 0.45 * pow(sunAmt, 4.0)) * (0.3 + 1.15 * lump);
   dc += sunC * thinD * pow(sunAmt, 12.0) * 1.6 * smoothstep(-0.06, 0.04, sy);
   // just after sunset / before sunrise the sun lights the cloud bases from below the horizon
   // (and while it is low: a sun under the deck warms the bases through golden hour)

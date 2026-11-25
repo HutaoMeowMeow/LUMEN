@@ -1,5 +1,6 @@
 3D models in this folder are from Poly Haven (https://polyhaven.com), licensed CC0 1.0 (public domain, no attribution required).
-Downloaded as the 1k glTF variants, unmodified; loaded by src/world/Models.js.
+Downloaded as the 1k glTF variants; loaded by src/world/Models.js. All files are unmodified except rock_moss_set_02
+(see below).
 
 lambis_shell            https://polyhaven.com/a/lambis_shell
 rock_09                 https://polyhaven.com/a/rock_09
@@ -14,4 +15,6 @@ rock_face_02            https://polyhaven.com/a/rock_face_02
 tree_stump_01           https://polyhaven.com/a/tree_stump_01
 dead_tree_trunk         https://polyhaven.com/a/dead_tree_trunk
 
-Multi-plant files are split by node-name suffix at load time; the files themselves are unmodified.
+Multi-plant files are split by node-name suffix at load time.
+rock_moss_set_02 was trimmed to the three rocks used (rock08, rock11, rock12): the four unused meshes were removed
+from the .gltf/.bin; the kept geometry and all textures are byte-identical to the download.
