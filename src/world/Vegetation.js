@@ -10,6 +10,10 @@ import { mulberry32, createNoise, smoothstep } from './noise.js';
 import { WORLD, ISLANDS, POIS, CAVES } from './layout.js';
 
 const CELL = 128;
+// Scanned models swap to their far LOD (Models.js, error <= 0.4% of size) once that error is under 0.5 px in the
+// worst case: 2160 px tall buffer at the 60 deg minimum FOV (f = 1870 px) -> 15 x world size, plus the cell half-diagonal.
+const modelLodDist = (geo, sMax) => CELL * 0.71 + 15 * 2 * geo.boundingSphere.radius * sMax;
+const SH_MARGIN = 12; // m of sun movement a shadow-caster cull covers before update() redoes it (see _shadowCull)
 const TAU = Math.PI * 2;
 const NV = createNoise(WORLD.seed + 5);
 const spire = ISLANDS.find((i) => i.id === 'spire');
@@ -205,15 +209,18 @@ export class Vegetation {
         fragEmissive: 'totalEmissiveRadiance += diffuseColor.rgb * vGlow * uGlowStrength * (0.85 + 0.15 * sin(uTime * 2.0 + vWPos.x));',
       }));
       const mat = mats.length > 1 ? mats : mats[0]; // multi-material scans draw one group per material
-      const lodGeo = mm ? null : t.lod ? t.lod() : t.lo && !lowDetail ? t.geo(true) : null;
+      const lodGeo = mm ? mm.lod : t.lod ? t.lod() : t.lo && !lowDetail ? t.geo(true) : null;
       if (sf.cards) for (const g of [geo, lodGeo]) if (g && !g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2).fill(-1), 2));
-      return { ...t, geo, lodGeo, lodDist: t.lod ? 150 * this.viewMul : CELL * 1.03, mat, pal: t.pal.map((h) => new THREE.Color(h)) };
+      // radius around an instance's origin, per unit scale, that both LODs stay inside (for shadow culling)
+      const shR = Math.max(...[geo, lodGeo].filter(Boolean).map((g) => { if (!g.boundingSphere) g.computeBoundingSphere(); return g.boundingSphere.center.length() + g.boundingSphere.radius; }));
+      return { ...t, geo, lodGeo, shR, lodDist: t.lod ? 150 * this.viewMul : CELL * 1.03, mat, pal: t.pal.map((h) => new THREE.Color(h)) };
     });
     this.dummy = new THREE.Object3D();
     this.tmpC = new THREE.Color();
     this.tmpM = new THREE.Matrix4();
     this.tmpN = [0, 1, 0];
     this.tmpB = [0, 0, 0, 0];
+    this.sh = { fr: new THREE.Frustum(), p: new THREE.Vector3(), q: new THREE.Quaternion(), valid: false };
   }
 
   // Nearest reef cluster centre {x, y, z, r} within maxD of (x, z), among loaded cells; null if none.
@@ -686,6 +693,7 @@ export class Vegetation {
       const im = new THREE.InstancedMesh(t.geo, t.mat, count);
       im.castShadow = !!t.land || t.name === 'rock';
       im.receiveShadow = true;
+      let sMax = 0;
       for (let k = 0; k < count; k++) {
         const o = k * STRIDE;
         const x = L[o], z = L[o + 1], s = L[o + 2], r = L[o + 3], pi = L[o + 4], yo = L[o + 5];
@@ -703,6 +711,7 @@ export class Vegetation {
         else if (t.name === 'bush' || t.name === 'shrub') dm.scale.set(s * (0.85 + v * 0.35), s * (0.75 + ((r * 3.7) % 1) * 0.45), s * (0.85 + ((r * 5.3) % 1) * 0.35));
         else dm.scale.setScalar(s);
         dm.updateMatrix();
+        sMax = Math.max(sMax, dm.scale.x, dm.scale.y, dm.scale.z);
         im.setMatrixAt(k, dm.matrix);
         im.setColorAt(k, col.copy(t.pal[pi % t.pal.length]).multiplyScalar(0.88 + ((r * 13.7) % 1) * 0.22));
         if (this.colliders) {
@@ -721,7 +730,7 @@ export class Vegetation {
       im.userData.view = t.view * this.viewMul;
       im.userData.land = !!t.land;
       im.userData.surf = !!t.surf;
-      im.userData.lodDist = t.lodDist;
+      im.userData.lodDist = t.model ? modelLodDist(t.geo, sMax) : t.lodDist;
       this.scene.add(im);
       meshes.push(im);
       if (t.lodGeo) { // far version shares the instance buffers; update() shows one or the other
@@ -736,9 +745,24 @@ export class Vegetation {
         this.scene.add(lm);
         meshes.push(lm);
       }
+      if (im.castShadow) { // casts through a culled proxy instead, see _shadowCull
+        const sp = new THREE.InstancedMesh(t.geo, t.mat, 0);
+        sp.castShadow = true;
+        sp.visible = false;
+        sp.layers.set(1);
+        sp.boundingSphere = im.boundingSphere;
+        sp.userData.isShadow = true;
+        im.userData.shadow = sp;
+        im.userData.shR = t.shR * sMax;
+        im.castShadow = false;
+        if (im.userData.lod) im.userData.lod.castShadow = false;
+        this.scene.add(sp);
+        meshes.push(sp);
+      }
     });
     for (const e of C.emit) this.emitters.push(e);
     this.cells.set(key, { meshes, colliderIds, reefs: C.reefs, emit: C.emit, cx: x0 + CELL / 2, cz: z0 + CELL / 2 });
+    if (this.sh.valid) this._shadowCull(this.cells.get(key));
   }
 
   _disposeCell(key) {
@@ -754,7 +778,48 @@ export class Vegetation {
     this.update({ position: { x, y: 0, z } }, 1e9, 9999);
   }
 
-  update(camera, viewDistUnder, budget = 1) {
+  // The sun's 160 m shadow box overlaps 128 m cells, and drawing a whole cell into the shadow map vertex-shades every
+  // instance though over half lie outside the box. So each caster draws into it through a proxy on layer 1 (which only
+  // the shadow camera sees) holding just the instances whose bounds reach the box + SH_MARGIN: the rest would be
+  // clipped anyway, so the shadow map is unchanged. _shadowBox redoes this before the box moves past the margin.
+  _shadowCull(cell) {
+    for (const m of cell.meshes) {
+      const sp = m.userData.shadow;
+      if (!sp) continue;
+      const bs = m.boundingSphere, a = m.instanceMatrix.array, r = m.userData.shR + SH_MARGIN;
+      let n = 0;
+      if (this._inShadow(bs.center.x, bs.center.y, bs.center.z, bs.radius + SH_MARGIN)) {
+        if (sp.instanceMatrix.count < m.count) sp.instanceMatrix = new THREE.InstancedBufferAttribute(new Float32Array(m.count * 16), 16).setUsage(THREE.DynamicDrawUsage);
+        const dst = sp.instanceMatrix.array;
+        for (let o = 0; o < m.count * 16; o += 16) if (this._inShadow(a[o + 12], a[o + 13], a[o + 14], r)) dst.set(a.subarray(o, o + 16), 16 * n++);
+        if (n) { sp.instanceMatrix.clearUpdateRanges(); sp.instanceMatrix.addUpdateRange(0, n * 16); sp.instanceMatrix.needsUpdate = true; }
+      }
+      sp.count = n;
+    }
+  }
+
+  _inShadow(x, y, z, r) {
+    for (const pl of this.sh.fr.planes) if (pl.normal.x * x + pl.normal.y * y + pl.normal.z * z + pl.constant < -r) return false;
+    return true;
+  }
+
+  _shadowBox(sun) {
+    const S = this.sh, c = sun.shadow.camera;
+    sun.updateMatrixWorld();
+    sun.target.updateMatrixWorld();
+    sun.shadow.updateMatrices(sun); // the shadow pass does the same at render; done early to see where the box is
+    c.layers.enable(1);
+    // farthest a box point moved since the last cull: translation + rotation about the camera (lever = box corner)
+    if (S.valid && c.position.distanceTo(S.p) + Math.hypot(c.right, c.top, c.far) * c.quaternion.angleTo(S.q) < SH_MARGIN * 0.8) return;
+    S.valid = true;
+    S.p.copy(c.position);
+    S.q.copy(c.quaternion);
+    S.fr.copy(sun.shadow.getFrustum());
+    for (const cell of this.cells.values()) this._shadowCull(cell);
+  }
+
+  update(camera, viewDistUnder, budget = 1, sun = null) {
+    if (sun?.castShadow) this._shadowBox(sun);
     const p = camera.position;
     const R = this.radius;
     const under = p.y < 0;
@@ -774,17 +839,21 @@ export class Vegetation {
       const dd = Math.hypot(cell.cx - p.x, cell.cz - p.z);
       if (dd > R + CELL * 1.6) { this._disposeCell(key); continue; }
       for (const m of cell.meshes) {
-        if (m.userData.isLod) continue;
+        if (m.userData.isLod || m.userData.isShadow) continue;
         // underwater fog hides everything past viewDistUnder; from above water only sea-floor types are capped
         const u = m.userData;
         const lim = under ? Math.min(u.view, viewDistUnder + 20) : u.land || u.surf ? u.view : Math.min(u.view, SEABED_ABOVE);
         const vis = dd - CELL * 0.71 < lim;
-        const lm = m.userData.lod;
+        const lm = u.lod, near = !lm || dd < u.lodDist;
         if (lm) {
-          const near = dd < m.userData.lodDist;
           m.visible = vis && near;
           lm.visible = vis && !near;
         } else m.visible = vis;
+        const sp = u.shadow; // casts exactly the LOD that is shown
+        if (sp) {
+          sp.visible = vis && sp.count > 0;
+          sp.geometry = near ? m.geometry : lm.geometry;
+        }
       }
     }
   }

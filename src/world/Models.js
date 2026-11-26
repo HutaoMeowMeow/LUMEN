@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
 
 // id -> scale from the file's metres to one local unit of instance scale, or [scale, variant suffixes to split out]
 const LIST = {
@@ -15,6 +16,25 @@ const LIST = {
 };
 
 export const MODELS = {};
+
+// Far LOD for Vegetation: same vertex buffers, fewer triangles, geometric error <= LOD_ERR of the model's size.
+// Vegetation only shows it from modelLodDist (per cell), where that error projects to under half a pixel.
+const LOD_ERR = 0.004;
+let simplifier = null;
+function farLod(geo) {
+  const pos = geo.attributes.position, idx = geo.index?.array;
+  if (!simplifier || !idx || pos.isInterleavedBufferAttribute) return null;
+  const groups = geo.groups.length ? geo.groups : [{ start: 0, count: idx.length, materialIndex: 0 }];
+  const parts = groups.map((g) => simplifier.simplify(idx.subarray(g.start, g.start + g.count), pos.array, 3, 0, LOD_ERR)[0]);
+  const out = new idx.constructor(parts.reduce((n, p) => n + p.length, 0));
+  const lod = new THREE.BufferGeometry();
+  let n = 0;
+  parts.forEach((p, i) => { out.set(p, n); lod.addGroup(n, p.length, groups[i].materialIndex); n += p.length; });
+  for (const k in geo.attributes) lod.setAttribute(k, geo.attributes[k]);
+  lod.setIndex(new THREE.BufferAttribute(out, 1));
+  lod.boundingBox = geo.boundingBox; lod.boundingSphere = geo.boundingSphere;
+  return lod;
+}
 
 function merge(scene, scale, only) {
   scene.updateMatrixWorld(true);
@@ -36,11 +56,12 @@ function merge(scene, scale, only) {
   geo.translate(-(b.min.x + b.max.x) / 2, -b.min.y, -(b.min.z + b.max.z) / 2).scale(scale, scale, scale);
   geo.setAttribute('aGlow', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count), 1));
   geo.computeBoundingSphere();
-  return { geo, mat: mats[0], mats };
+  return { geo, mat: mats[0], mats, lod: farLod(geo) };
 }
 
 export async function loadModels(base = import.meta.env.BASE_URL) {
   const loader = new GLTFLoader();
+  try { await MeshoptSimplifier.ready; simplifier = MeshoptSimplifier; } catch (e) { console.warn('LUMEN: no far LOD for scanned models', e); }
   await Promise.all(Object.entries(LIST).map(async ([id, scale]) => {
     try {
       const gltf = await loader.loadAsync(`${base}models/${id}/${id}_1k.gltf`);

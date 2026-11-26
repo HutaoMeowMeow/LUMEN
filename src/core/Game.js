@@ -41,7 +41,7 @@ export class Game {
     this.playTime = 0;
     this.fade = 1;
     this.fps = 0;
-    this.res = { scale: 1, t0: 0, n: 0, up: 0, down: 0, wait: 4, raisedAt: -1e9 }; // dynamic resolution state
+    this.res = { scale: 1, t0: 0, last: 0, n: 0, dt: new Float32Array(256), ms: 0, up: 0, down: 0, wait: 4, raisedAt: -1e9 }; // dynamic resolution state
     this.audio = new Audio(this.settings);
     this.ui = new UI(this);
     // audio may only start after a user gesture
@@ -292,10 +292,11 @@ export class Game {
   // so render fewer pixels while frames run long and climb back once frames hold the display rate again.
   _adaptRes(now) {
     const R = this.res;
-    if (now - R.t0 > 2000) { R.t0 = now; R.n = 0; return; } // first frame, or resumed after a pause
-    R.n++;
+    if (now - R.t0 > 2000) { R.t0 = R.last = now; R.n = 0; return; } // first frame, or resumed after a pause
+    if (R.n < R.dt.length) R.dt[R.n++] = now - R.last;
+    R.last = now;
     if (now - R.t0 < 1000) return;
-    const ms = (now - R.t0) / R.n;
+    const ms = R.ms = R.dt.subarray(0, R.n).sort()[R.n >> 1]; // median frame of the last second: a one-off hitch (cell build, GC) is not a fill-rate problem
     R.t0 = now; R.n = 0;
     if (ms > 21) { R.up = 0; if (++R.down >= 2 && R.scale > this._resMin()) this._setRes(R.scale - 0.1, now); }
     else if (ms < 17.8) { R.down = 0; if (++R.up >= R.wait && R.scale < 1) { R.raisedAt = now; this._setRes(R.scale + 0.1, now); } }
@@ -371,7 +372,7 @@ export class Game {
     // world systems
     ocean.update(time, camera, sky);
     this.terrain.update(camera, P.viewUnder);
-    this.vegetation.update(camera, P.viewUnder, 1);
+    this.vegetation.update(camera, P.viewUnder, 1, this.sun);
     this.caustics.update(time);
     this.shafts.update(camera, sky, cave);
     this.structures.update(time, day);
